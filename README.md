@@ -193,7 +193,7 @@ Poly is organized as a Cargo workspace with the following crates:
 - Plugin system
 
 ### Phase 6: Registry and ecosystem
-- poly.dev registry
+- crates.io registry
 - Package analytics
 - Private registries
 - Binary installation and distribution

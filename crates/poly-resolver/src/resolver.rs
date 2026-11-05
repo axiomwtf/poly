@@ -71,9 +71,9 @@ impl DependencyResolver {
         let (version, source) = self.parse_version_spec(version_spec);
 
         let source_url = match source.as_deref() {
-            Some("poly") => "https://poly.dev",
+            Some("poly") => "https://crates.io",
             Some("system") => "system",
-            _ => "https://poly.dev",
+            _ => "https://crates.io",
         };
 
         Ok(LockEntry {
