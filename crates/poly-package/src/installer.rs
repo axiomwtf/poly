@@ -1,7 +1,7 @@
 //! Package installer for installing Poly packages
 
 use anyhow::Result;
-use poly_vfsx::VfsxVerifier;
+use poly_vfsx::Vfsx;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info};
@@ -11,7 +11,7 @@ use tracing::{debug, info};
 pub struct InstallConfig {
     pub install_dir: PathBuf,
     pub verify_signatures: bool,
-    pub trusted_keys: Vec<[u8; 32]>,
+    pub public_key_path: Option<PathBuf>,
 }
 
 /// Package installer
@@ -31,10 +31,12 @@ impl Installer {
 
         // Verify package if configured
         if self.config.verify_signatures {
-            self.verify_package(archive_path).await?;
+            if let Some(key_path) = &self.config.public_key_path {
+                self.verify_package(archive_path, key_path).await?;
+            }
         }
 
-        // Extract package
+        // Extract package using external vfsx command
         let temp_dir = self.extract_package(archive_path).await?;
 
         // Install package
@@ -47,13 +49,13 @@ impl Installer {
         Ok(())
     }
 
-    /// Verify package signatures
-    async fn verify_package(&self, archive_path: &Path) -> Result<()> {
+    /// Verify package signatures using external vfsx command
+    async fn verify_package(&self, archive_path: &Path, key_path: &Path) -> Result<()> {
         debug!("Verifying package signatures");
 
-        let verifier = VfsxVerifier::new(self.config.trusted_keys.clone());
+        let vfsx = Vfsx::new(false);
         
-        if !verifier.verify_archive(archive_path)? {
+        if !vfsx.verify(archive_path, key_path)? {
             anyhow::bail!("Package signature verification failed");
         }
 
@@ -61,7 +63,7 @@ impl Installer {
         Ok(())
     }
 
-    /// Extract package archive
+    /// Extract package archive using external vfsx command
     async fn extract_package(&self, archive_path: &Path) -> Result<PathBuf> {
         debug!("Extracting package: {}", archive_path.display());
 
@@ -70,15 +72,9 @@ impl Installer {
         
         fs::create_dir_all(&temp_dir)?;
 
-        // Extract archive
-        use tar::Archive;
-        use xz2::read::XzDecoder;
-
-        let file = fs::File::open(archive_path)?;
-        let decoder = XzDecoder::new(file);
-        let mut archive = Archive::new(decoder);
-
-        archive.unpack(&temp_dir)?;
+        // Extract archive using external vfsx command
+        let vfsx = Vfsx::new(false);
+        vfsx.extract(archive_path, &temp_dir)?;
 
         Ok(temp_dir)
     }
@@ -103,12 +99,12 @@ impl Installer {
     }
 
     fn find_package_root(&self, extract_dir: &Path) -> Result<PathBuf> {
-        // Look for the package directory (should contain vfsx.manifest.json)
+        // Look for the package directory (should contain package.json)
         for entry in fs::read_dir(extract_dir)? {
             let entry = entry?;
             let path = entry.path();
             
-            if path.is_dir() && path.join("vfsx.manifest.json").exists() {
+            if path.is_dir() && path.join("package.json").exists() {
                 return Ok(path);
             }
         }
@@ -201,10 +197,10 @@ impl Installer {
         let metadata_dir = self.config.install_dir.join("metadata");
         fs::create_dir_all(&metadata_dir)?;
 
-        // Copy manifest
-        let manifest_path = package_root.join("vfsx.manifest.json");
-        if manifest_path.exists() {
-            fs::copy(&manifest_path, metadata_dir.join("vfsx.manifest.json"))?;
+        // Copy package.json
+        let package_json_path = package_root.join("package.json");
+        if package_json_path.exists() {
+            fs::copy(&package_json_path, metadata_dir.join("package.json"))?;
         }
 
         // Copy lock file
@@ -284,7 +280,7 @@ impl Default for Installer {
         Self::new(InstallConfig {
             install_dir: PathBuf::from(".poly"),
             verify_signatures: true,
-            trusted_keys: Vec::new(),
+            public_key_path: None,
         })
     }
 }

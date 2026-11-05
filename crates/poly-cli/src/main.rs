@@ -514,24 +514,22 @@ fn cmd_sign(keyfile: Option<String>) -> Result<()> {
         .or_else(|| config.vfsx.as_ref().map(|v| v.keyfile.clone()))
         .context("No keyfile specified. Use --keyfile or configure in poly.ini")?;
 
-    // For MVP, just create a manifest and sign it
-    let manifest = poly_vfsx::VfsxManifest::new(poly_vfsx::PackageInfo {
-        name: config.project.name.clone(),
-        version: config.project.version.clone(),
-        description: None,
-        authors: Vec::new(),
-        license: "MPL-2.0".to_string(),
-        repository: None,
-        keywords: Vec::new(),
-        platforms: Vec::new(),
-    });
+    // For MVP, generate a keypair if it doesn't exist
+    let keyfile = PathBuf::from(&keyfile_path);
+    if !keyfile.exists() {
+        info!("Generating new keypair: {}", keyfile_path);
+        let vfsx = poly_vfsx::Vfsx::new(false);
+        vfsx.key_gen(&keyfile)?;
+    }
 
-    let signer = poly_vfsx::VfsxSigner::from_keyfile(std::path::Path::new(&keyfile_path))?;
-    let signature = signer.sign_manifest(&manifest)?;
+    // Export public key
+    let public_key_path = keyfile.with_extension("pub");
+    let vfsx = poly_vfsx::Vfsx::new(false);
+    vfsx.key_export(&keyfile, &public_key_path)?;
 
-    info!("Package signed successfully");
-    info!("  Key ID: {}", signature.key_id);
-    info!("  Algorithm: {}", signature.algorithm);
+    info!("Keypair generated and exported");
+    info!("  Private key: {}", keyfile.display());
+    info!("  Public key: {}", public_key_path.display());
 
     Ok(())
 }
@@ -546,19 +544,35 @@ fn cmd_verify(package: Option<String>) -> Result<()> {
         anyhow::bail!("Package path does not exist: {}", package_path);
     }
 
-    let verifier = poly_vfsx::VfsxVerifier::trust_all();
+    // Look for public key
+    let public_key_path = PathBuf::from("poly.pub");
+    if !public_key_path.exists() {
+        info!("No public key found at {}", public_key_path.display());
+        info!("Run 'poly sign' to generate keys first");
+        return Ok(());
+    }
+
+    let vfsx = poly_vfsx::Vfsx::new(false);
     
     if path.is_file() {
-        if verifier.verify_archive(&path)? {
+        if vfsx.verify(&path, &public_key_path)? {
             info!("Package signature verified successfully");
         } else {
             info!("Package signature verification failed");
         }
     } else if path.is_dir() {
-        if verifier.verify_package(&path)? {
-            info!("Package signature verified successfully");
-        } else {
-            info!("Package signature verification failed");
+        // Verify all .vfsx files in directory
+        for entry in std::fs::read_dir(&path)? {
+            let entry = entry?;
+            let file_path = entry.path();
+            
+            if file_path.extension().map_or(false, |ext| ext == "vfsx") {
+                if vfsx.verify(&file_path, &public_key_path)? {
+                    info!("{}: verified", file_path.display());
+                } else {
+                    info!("{}: verification failed", file_path.display());
+                }
+            }
         }
     }
 
@@ -584,8 +598,7 @@ async fn cmd_publish(config_path: Option<String>) -> Result<()> {
         license: "MPL-2.0".to_string(),
         platforms: publish_config.platforms.clone(),
         include_docs: publish_config.include_docs,
-        sign: config.vfsx.as_ref().map(|v| v.sign).unwrap_or(false),
-        keyfile: config.vfsx.as_ref().map(|v| PathBuf::from(&v.keyfile)),
+        compression: "zstd".to_string(),
     };
 
     let packager = poly_package::Packager::new(
@@ -613,7 +626,7 @@ async fn cmd_install(package: String, local: Option<String>) -> Result<()> {
     let installer = poly_package::Installer::new(poly_package::InstallConfig {
         install_dir: PathBuf::from(".poly"),
         verify_signatures: true,
-        trusted_keys: Vec::new(),
+        public_key_path: Some(PathBuf::from("poly.pub")),
     });
 
     if let Some(local_path) = local {
@@ -634,7 +647,7 @@ async fn cmd_uninstall(package: String) -> Result<()> {
     let installer = poly_package::Installer::new(poly_package::InstallConfig {
         install_dir: PathBuf::from(".poly"),
         verify_signatures: true,
-        trusted_keys: Vec::new(),
+        public_key_path: Some(PathBuf::from("poly.pub")),
     });
 
     installer.uninstall(&package).await?;

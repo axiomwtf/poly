@@ -1,7 +1,7 @@
 //! Package packager for creating distributable archives
 
-use anyhow::{Context, Result};
-use poly_vfsx::{VfsxManifest, VfsxSigner, PackageInfo};
+use anyhow::Result;
+use poly_vfsx::Vfsx;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info};
@@ -16,8 +16,7 @@ pub struct PackageConfig {
     pub license: String,
     pub platforms: Vec<String>,
     pub include_docs: bool,
-    pub sign: bool,
-    pub keyfile: Option<PathBuf>,
+    pub compression: String,
 }
 
 /// Package packager
@@ -79,24 +78,20 @@ impl Packager {
             fs::copy(&lock_file, package_dir.join("poly.lock"))?;
         }
 
-        // Create manifest
-        let manifest = self.create_manifest(platform)?;
-        let manifest_path = package_dir.join("vfsx.manifest.json");
-        let manifest_json = serde_json::to_string_pretty(&manifest)?;
-        fs::write(&manifest_path, manifest_json)?;
+        // Create metadata file
+        let metadata = self.create_metadata(platform)?;
+        let metadata_path = package_dir.join("package.json");
+        let metadata_json = serde_json::to_string_pretty(&metadata)?;
+        fs::write(&metadata_path, metadata_json)?;
 
-        // Sign package if configured
-        if self.config.sign {
-            self.sign_package(&package_dir, &manifest).await?;
-        }
-
-        // Create archive
+        // Create VFSX archive using external command
         let archive_path = self.output_dir.join(format!(
-            "{}-{}.vfsx.tar.zst",
-            self.config.name, self.config.version
+            "{}-{}-{}.vfsx",
+            self.config.name, self.config.version, platform
         ));
 
-        self.create_archive(&package_dir, &archive_path)?;
+        let vfsx = Vfsx::new(false);
+        vfsx.create(&package_dir, &archive_path, &self.config.compression)?;
 
         // Cleanup
         fs::remove_dir_all(&package_dir)?;
@@ -173,89 +168,18 @@ impl Packager {
         matches!(ext, "rs" | "c" | "cpp" | "h" | "hpp" | "go" | "js" | "ts" | "py" | "java" | "kt")
     }
 
-    fn create_manifest(&self, platform: &str) -> Result<VfsxManifest> {
-        let package_info = PackageInfo {
-            name: self.config.name.clone(),
-            version: self.config.version.clone(),
-            description: self.config.description.clone(),
-            authors: self.config.authors.clone(),
-            license: self.config.license.clone(),
-            repository: None, // TODO: Get from config
-            keywords: Vec::new(), // TODO: Get from config
-            platforms: vec![platform.to_string()],
-        };
+    fn create_metadata(&self, platform: &str) -> Result<serde_json::Value> {
+        let metadata = serde_json::json!({
+            "name": self.config.name,
+            "version": self.config.version,
+            "description": self.config.description,
+            "authors": self.config.authors,
+            "license": self.config.license,
+            "platform": platform,
+            "created": chrono::Utc::now().to_rfc3339(),
+        });
 
-        let mut manifest = VfsxManifest::new(package_info);
-
-        // Add file entries
-        let package_dir = self.output_dir.join(format!("{}-{}-{}", 
-            self.config.name, self.config.version, platform));
-        
-        for entry in walkdir::WalkDir::new(&package_dir) {
-            let entry = entry?;
-            let path = entry.path();
-            
-            if path.is_file() {
-                let relative_path = path.strip_prefix(&package_dir)?;
-                let metadata = fs::metadata(path)?;
-                let checksum = self.calculate_checksum(path)?;
-                
-                manifest.add_file(
-                    relative_path.to_string_lossy().to_string(),
-                    metadata.len(),
-                    checksum,
-                );
-            }
-        }
-
-        Ok(manifest)
-    }
-
-    fn calculate_checksum(&self, path: &Path) -> Result<String> {
-        use sha2::{Digest, Sha256};
-        
-        let content = fs::read(path)?;
-        let mut hasher = Sha256::new();
-        hasher.update(&content);
-        Ok(format!("sha256:{}", hex::encode(hasher.finalize())))
-    }
-
-    async fn sign_package(&self, package_dir: &Path, manifest: &VfsxManifest) -> Result<()> {
-        let keyfile = self.config.keyfile.as_ref()
-            .context("No keyfile specified for signing")?;
-        
-        let signer = VfsxSigner::from_keyfile(keyfile)?;
-        let mut signed_manifest = manifest.clone();
-        
-        signer.sign_package(package_dir, &mut signed_manifest)?;
-        
-        Ok(())
-    }
-
-    fn create_archive(&self, source_dir: &Path, output_path: &Path) -> Result<()> {
-        use tar::Builder;
-        use xz2::write::XzEncoder;
-
-        let file = fs::File::create(output_path)?;
-        let encoder = XzEncoder::new(file, 9);
-        let mut tar_builder = Builder::new(encoder);
-
-        for entry in walkdir::WalkDir::new(source_dir) {
-            let entry = entry?;
-            let path = entry.path();
-
-            if path.is_file() {
-                let relative_path = path.strip_prefix(source_dir)?;
-                let mut file = fs::File::open(path)?;
-                tar_builder.append_file(relative_path, &mut file)?;
-            }
-        }
-
-        let encoder = tar_builder.into_inner()?;
-        encoder.finish()?;
-
-        debug!("Created archive: {}", output_path.display());
-        Ok(())
+        Ok(metadata)
     }
 }
 
@@ -270,8 +194,7 @@ impl Default for Packager {
                 license: "MPL-2.0".to_string(),
                 platforms: Vec::new(),
                 include_docs: false,
-                sign: false,
-                keyfile: None,
+                compression: "zstd".to_string(),
             },
             PathBuf::from("target"),
             PathBuf::from("dist"),
