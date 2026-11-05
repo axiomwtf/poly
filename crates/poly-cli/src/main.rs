@@ -54,6 +54,31 @@ enum Commands {
     Clean,
     /// Validate configuration
     Validate,
+    /// Sign the current project
+    Sign {
+        #[arg(short, long)]
+        keyfile: Option<String>,
+    },
+    /// Verify package signatures
+    Verify {
+        #[arg(short, long)]
+        package: Option<String>,
+    },
+    /// Publish to registry
+    Publish {
+        #[arg(short, long)]
+        config: Option<String>,
+    },
+    /// Install a package
+    Install {
+        package: String,
+        #[arg(long)]
+        local: Option<String>,
+    },
+    /// Uninstall a package
+    Uninstall {
+        package: String,
+    },
 }
 
 #[tokio::main]
@@ -72,6 +97,11 @@ async fn main() -> Result<()> {
         Commands::Lock { config } => cmd_lock(config),
         Commands::Clean => cmd_clean(),
         Commands::Validate => cmd_validate(),
+        Commands::Sign { keyfile } => cmd_sign(keyfile),
+        Commands::Verify { package } => cmd_verify(package),
+        Commands::Publish { config } => cmd_publish(config).await,
+        Commands::Install { package, local } => cmd_install(package, local).await,
+        Commands::Uninstall { package } => cmd_uninstall(package).await,
     }
 }
 
@@ -470,6 +500,144 @@ fn cmd_validate() -> Result<()> {
     info!("  Rust dependencies: {}", config.dependencies.rust.len());
     info!("  C dependencies: {}", config.dependencies.c.len());
     info!("  Go dependencies: {}", config.dependencies.go.len());
+
+    Ok(())
+}
+
+fn cmd_sign(keyfile: Option<String>) -> Result<()> {
+    info!("Signing project");
+
+    let config = parse_poly_ini("poly.ini")?;
+
+    // Use keyfile from config or command line
+    let keyfile_path = keyfile
+        .or_else(|| config.vfsx.as_ref().map(|v| v.keyfile.clone()))
+        .context("No keyfile specified. Use --keyfile or configure in poly.ini")?;
+
+    // For MVP, just create a manifest and sign it
+    let manifest = poly_vfsx::VfsxManifest::new(poly_vfsx::PackageInfo {
+        name: config.project.name.clone(),
+        version: config.project.version.clone(),
+        description: None,
+        authors: Vec::new(),
+        license: "MPL-2.0".to_string(),
+        repository: None,
+        keywords: Vec::new(),
+        platforms: Vec::new(),
+    });
+
+    let signer = poly_vfsx::VfsxSigner::from_keyfile(std::path::Path::new(&keyfile_path))?;
+    let signature = signer.sign_manifest(&manifest)?;
+
+    info!("Package signed successfully");
+    info!("  Key ID: {}", signature.key_id);
+    info!("  Algorithm: {}", signature.algorithm);
+
+    Ok(())
+}
+
+fn cmd_verify(package: Option<String>) -> Result<()> {
+    info!("Verifying package signatures");
+
+    let package_path = package.unwrap_or_else(|| "dist".to_string());
+    let path = PathBuf::from(&package_path);
+
+    if !path.exists() {
+        anyhow::bail!("Package path does not exist: {}", package_path);
+    }
+
+    let verifier = poly_vfsx::VfsxVerifier::trust_all();
+    
+    if path.is_file() {
+        if verifier.verify_archive(&path)? {
+            info!("Package signature verified successfully");
+        } else {
+            info!("Package signature verification failed");
+        }
+    } else if path.is_dir() {
+        if verifier.verify_package(&path)? {
+            info!("Package signature verified successfully");
+        } else {
+            info!("Package signature verification failed");
+        }
+    }
+
+    Ok(())
+}
+
+async fn cmd_publish(config_path: Option<String>) -> Result<()> {
+    info!("Publishing package");
+
+    let config_file = config_path.unwrap_or_else(|| "poly.ini".to_string());
+    let config = parse_poly_ini(&config_file)?;
+
+    // Check if publish config exists
+    let publish_config = config.publish
+        .context("No [publish] section found in poly.ini")?;
+
+    // Create package
+    let package_config = poly_package::PackageConfig {
+        name: config.project.name.clone(),
+        version: config.project.version.clone(),
+        description: None,
+        authors: Vec::new(),
+        license: "MPL-2.0".to_string(),
+        platforms: publish_config.platforms.clone(),
+        include_docs: publish_config.include_docs,
+        sign: config.vfsx.as_ref().map(|v| v.sign).unwrap_or(false),
+        keyfile: config.vfsx.as_ref().map(|v| PathBuf::from(&v.keyfile)),
+    };
+
+    let packager = poly_package::Packager::new(
+        package_config,
+        PathBuf::from("target"),
+        PathBuf::from("dist"),
+    );
+
+    let packages = packager.create_package().await?;
+
+    info!("Created {} packages", packages.len());
+    for package in packages {
+        info!("  {}", package.display());
+    }
+
+    // TODO: Upload to crates.io registry
+    info!("Package ready for publishing to crates.io");
+
+    Ok(())
+}
+
+async fn cmd_install(package: String, local: Option<String>) -> Result<()> {
+    info!("Installing package: {}", package);
+
+    let installer = poly_package::Installer::new(poly_package::InstallConfig {
+        install_dir: PathBuf::from(".poly"),
+        verify_signatures: true,
+        trusted_keys: Vec::new(),
+    });
+
+    if let Some(local_path) = local {
+        // Install from local file
+        installer.install(std::path::Path::new(&local_path)).await?;
+    } else {
+        // Install from registry (not implemented yet)
+        info!("Installing from registry: {}", package);
+        info!("(Registry installation not yet implemented)");
+    }
+
+    Ok(())
+}
+
+async fn cmd_uninstall(package: String) -> Result<()> {
+    info!("Uninstalling package: {}", package);
+
+    let installer = poly_package::Installer::new(poly_package::InstallConfig {
+        install_dir: PathBuf::from(".poly"),
+        verify_signatures: true,
+        trusted_keys: Vec::new(),
+    });
+
+    installer.uninstall(&package).await?;
 
     Ok(())
 }

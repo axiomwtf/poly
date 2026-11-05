@@ -17,6 +17,9 @@ poly-rust = { path = "../poly-rust" }
 poly-c = { path = "../poly-c" }
 poly-go = { path = "../poly-go" }
 poly-linker = { path = "../poly-linker" }
+poly-vfsx = { path = "../poly-vfsx" }
+poly-registry = { path = "../poly-registry" }
+poly-package = { path = "../poly-package" }
 clap = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
