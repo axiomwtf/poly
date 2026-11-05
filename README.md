@@ -2,33 +2,41 @@
 
 **One build system for Rust, C/C++ and Go**
 
-Poly is a build system and package manager for Rust, C/C++ and Go, with one manifest (`poly.ini`), one lock file (`poly.lock`), and one command set.
+Poly is a build system and package manager for Rust, C/C++ and Go, with one manifest (`poly.ini`), one lock file (`poly.lock`), and one command set. It invokes `rustc`, C/C++ compilers, and the Go toolchain directly — no Cargo, CMake, or Make involved in user-project builds.
 
-> **Status:** Phase 1 (Core MVP) - In development
+> **Status:** All six spec phases implemented. Poly builds itself — a ~170-crate dependency graph across 11 workspace crates — for Linux and Windows entirely through `poly build`.
 
 ## Features
 
-- **Unified manifest**: Single `poly.ini` file for all three languages
-- **Direct compiler invocation**: Calls `rustc`, `gcc`/`clang`, and `go tool` directly
-- **Dependency resolution**: Basic SAT-based resolver for cross-language dependencies
-- **Lock file**: Unified `poly.lock` for all dependencies
-- **Task graph**: Build orchestration with dependency tracking
-- **Caching**: Local build cache (basic implementation)
-- **Multi-target builds**: Support for libraries, binaries, and static libraries
+- **Unified manifest**: Single `poly.ini` for all three languages
+- **Direct compiler invocation**: `rustc`, `gcc`/`clang`/MSVC, `go` — never Cargo for user projects
+- **Full Rust dependency compilation**: transitive deps, features, optional deps, renamed deps, proc macros, build scripts with `links`/`DEP_*` propagation, target-specific deps
+- **Source-usage analysis**: only crates actually referenced in `use`/paths are compiled as direct externs
+- **Cross-compilation**: Linux + Windows binaries from a single `poly build` (MinGW toolchain for Windows)
+- **Unit-level caching**: unchanged dependency units are skipped on rebuild
+- **Lock file**: `poly.lock` pins resolved versions and checksums
+- **VFSX packaging**: per-platform `.vfsx.tar.zst` archives plus a combined installable package (auto-created; `--no-package` to skip)
+- **Signing & verification**: ed25519 signatures via the external `vfsx` tool
+- **crates.io publish/install**: `poly publish` uploads a `.crate` (stub `Cargo.toml` + full sources + `poly.ini`/`poly.lock`); `poly install` downloads, compiles with Poly, and installs the result
+- **Developer tooling**: `test`, `lint`, `fmt`, `doc`, `ci`, `migrate`, `completion`, `cache`, `tree`, `outdated`, `audit`, `sbom`, `profile`, `ide`, `release`, `review`, `diff`, `flamegraph`, `stats`, `env`
+- **Auth**: `poly login`/`poly logout` store registry tokens in `~/.config/poly/credentials.toml`
 
 ## Installation
 
-```bash
-cargo install --path crates/poly-cli
-```
-
-Or build from source:
+There is no `cargo install`-able binary yet (the crates.io crate is a source package). Build from source:
 
 ```bash
-cargo build --release
+git clone https://github.com/axiomwtf/poly.git
+cd poly
+cargo build --release   # Cargo is only used to build Poly itself during development
+./target/release/poly --help
 ```
 
-The binary will be at `target/release/poly`.
+Once you have a `poly` binary, Poly-built projects work without Cargo:
+
+```bash
+poly install axiom-poly   # downloads sources from crates.io, builds with Poly, installs
+```
 
 ## Usage
 
@@ -38,176 +46,151 @@ The binary will be at `target/release/poly`.
 poly init --name my-project
 ```
 
-This creates:
-- `poly.ini` - project manifest
-- `src/lib.rs` - basic Rust library
-
 ### Build
 
 ```bash
 poly build
+poly build --release
+poly build --no-package   # skip the combined .vfsx.tar.zst package
 ```
 
-Builds all targets defined in `poly.ini`.
+Builds all targets for **both Windows and Linux** — there's no flag to pick one OS.
 
-### Validate configuration
+**Output** goes to `dist/{profile}/`:
+
+```
+dist/
+├── debug/
+│   ├── linux/x86_64-unknown-linux-gnu/my-app
+│   ├── windows/x86_64-pc-windows-gnu/my-app.exe
+│   ├── poly-linux.debug.vfsx.tar.zst     ← per-platform archives
+│   ├── poly-windows.debug.vfsx.tar.zst
+│   └── deps/                            ← cached dependency artifacts
+└── my-app-1.0.0.vfsx.tar.zst            ← combined installable package
+```
+
+### Package / sign / verify / install
 
 ```bash
-poly validate
+poly package            # combined dist/{name}-{version}.vfsx.tar.zst
+poly sign               # sign archives with the vfsx identity
+poly verify             # verify signatures
+poly install my-app     # from crates.io (builds from source) or a Poly registry
+poly install my-app --local dist/my-app-1.0.0.vfsx.tar.zst
+poly uninstall my-app
 ```
 
-Checks that `poly.ini` is valid.
-
-### Generate lock file
+### Publish
 
 ```bash
-poly lock
+poly login              # paste a crates.io API token (stored locally)
+poly publish            # publishes every rust:* target in [publish] targets
 ```
 
-Resolves dependencies and generates `poly.lock`.
+Each Rust target becomes a `.crate` on crates.io containing the full project sources, `poly.ini`, `poly.lock`, and a stub `Cargo.toml` (registry compatibility only — `poly.ini` is the source of truth). Crate naming: `[publish] crateName` + target suffix for multi-target projects, or the target id by default.
 
-### Clean
+### Quality tooling
 
 ```bash
-poly clean
+poly test [target]      # compile & run #[test] targets
+poly lint [target]      # rustc/cppcheck-style checks
+poly fmt                # rustfmt / clang-format / gofmt
+poly doc                # generate docs into doc/
+poly ci <provider>      # generate CI workflow
+poly completion <shell> # shell completions
+poly cache              # cache stats / clean
+poly tree / outdated    # dependency views
+poly audit / sbom       # security audit / SBOM generation
 ```
-
-Removes build artifacts.
-
-### Add/Remove dependencies
-
-```bash
-poly add rust:serde
-poly remove go:github.com/gorilla/mux
-```
-
-(Full implementation pending)
 
 ## Configuration
 
 ### poly.ini
-
-Example configuration:
 
 ```ini
 [project]
 name = my-app
 version = 1.0.0
 edition = 2024
+description = "..."
+license = MIT
+repository = https://github.com/you/my-app
 
-[target.lib]
+[target.app]
 language = rust
-type = lib
-sources = src/lib.rs
+type = bin
+sources = src/main.rs
+edition = 2024
 
 [target.crypto]
 language = c
 type = static-lib
-sources = src/crypto/*.c, src/crypto/*.h
+sources = src/crypto/*.c
 compiler = clang
 flags = -O3, -Wall
 
-[target.server]
-language = go
-type = bin
-sources = cmd/server/*.go
-module = github.com/user/my-app/server
-cgo = true
-
 [dependencies.rust]
-serde = 1.0
-tokio = 1.0|full
+serde = 1.0|derive
+tokio = 1.40|full
 
 [dependencies.c]
 openssl = 3.0|poly
-libz = 1.2|system
 
 [dependencies.go]
 github.com/gorilla/mux = 1.8
 
+[dependencies.workspace.app]    # path deps between workspace targets
+my-lib = path
+
 [build.default]
-targets = rust:lib, c:crypto, go:server
+targets = rust:app, c:crypto
+
+[publish]
+crateName = my-org-my-app      # optional crates.io name override
+targets = rust:app             # defaults to build targets
+platforms = x86_64-linux, x86_64-windows
+registry = https://...         # optional custom Poly registry for the vfsx package
+tokenEnv = MY_REGISTRY_TOKEN
+
+[hooks]
+preBuild = "echo building"
+postBuild = "echo done"
 ```
 
 ### Conventions
 
-1. **Dots make hierarchy**: `[target.lib]` is target `lib`, `[build.profiles.release]` is nested
-2. **Commas make arrays**: `members = lib, bin` and `flags = -O3, -Wall`
-3. **Pipes add metadata**: `tokio = 1.0|full` means version 1.0 with `full` features
-4. **Keys are camelCase**: `trustStore`, `includeDocs`, `runOnBuild`
-
-### Naming rules
-
-- Config keys must be camelCase
-- Section names are lowercase with dots for hierarchy
-- Dependency names are exempt (kept as published)
-- Poly warns on non-camelCase keys
+- `[section.sub]` makes hierarchy; commas make arrays; `|` adds metadata (version|features)
+- Keys are camelCase (`includeDocs`, `runOnBuild`, `crateName`, `tokenEnv`)
+- Dependency specs: `version`, `version|feat1,feat2`, `path` (workspace member)
 
 ## Architecture
 
-Poly is organized as a Cargo workspace with the following crates:
+Cargo workspace:
 
-- `poly-cli` - Command-line interface
-- `poly-core` - Task graph, caching, and execution
+- `poly-cli` - CLI, crates.io publish/install, hooks
+- `poly-core` - dependency compiler (unit graph, cache, lockfile)
 - `poly-config` - `poly.ini` parser
-- `poly-resolver` - Dependency resolution (SAT solver)
-- `poly-rust` - Rust driver (direct `rustc`)
-- `poly-c` - C/C++ driver (`gcc`, `clang`, `msvc`)
-- `poly-go` - Go driver (`go tool compile`/`link`)
+- `poly-resolver` - version resolution
+- `poly-rust` / `poly-c` / `poly-go` - language drivers
+- `poly-linker` - cross-language linking
+- `poly-vfsx` - external `vfsx` tool wrapper
+- `poly-registry` - registry HTTP client
+- `poly-package` - packager & installer
 
-## Roadmap
+## Honest limitations
 
-### Phase 1: Core (MVP) ✅
-- `poly.ini` parser
-- `poly.lock` generation
-- Dependency resolver (SAT solver)
-- Basic drivers for rustc, gcc and go
-- Simple task graph execution
-- Basic cache
-
-### Phase 2: Language support ✅
-- Full Rust driver (features, cfg, build scripts)
-- Full C/C++ driver (header scanning, linking)
-- Full Go driver (modules, CGO)
-- Unified linker orchestration
-
-**Note:** External dependency resolution is currently limited. Poly can compile projects without external dependencies, but cannot yet download or compile crates.io dependencies. This will be addressed in Phase 3 with the registry client.
-
-### Phase 3: Integrations and packaging
-- VFSX signing and verification
-- Package registry client
-- Single-binary packaging
-
-### Phase 4: Developer experience
-- Test runner
-- Linting and formatting
-- Documentation generation
-- Shell completion
-- IDE integration
-
-### Phase 5: Advanced features
-- Toolchain management
-- Cross-compilation
-- CI/CD generation
-- Migration tools
-- Plugin system
-
-### Phase 6: Registry and ecosystem
-- crates.io registry
-- Package analytics
-- Private registries
-- Binary installation and distribution
+- The resolver is greedy latest-match, not a full SAT solver — exotic version conflicts can resolve incorrectly
+- C/C++ and Go drivers work but are less battle-tested than Rust
+- Some advanced commands (`audit`, `flamegraph`, `toolchain install`, plugins) are functional but basic
+- crates.io packages are source distributions; `poly install` compiles them locally
+- Git dependencies, `[patch]`/`[replace]`, and dev-dependencies are not yet supported
 
 ## License
 
 MPL-2.0
 
-## Contributing
-
-Contributions are welcome! Please see the [spec](../axiom/polyspec.md) for details.
-
 ## Links
 
 - [Axiom](https://github.com/axiomwtf) - Studio behind Poly
 - [VFSX](https://github.com/axiomwtf/vfsx) - Signed archive format used by Poly
-- [Poly spec](../axiom/polyspec.md) - Full specification
+- Spec: `polyspec.md` in the [axiom](https://github.com/axiomwtf/axiom) repo
