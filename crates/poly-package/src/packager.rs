@@ -112,7 +112,16 @@ impl Packager {
 
                 let dest_dir = staging.join("bin").join(&slug);
                 fs::create_dir_all(&dest_dir)?;
-                for file in Self::executables_in(&triple_dir)? {
+                // poly-linker writes the single unified executable under
+                // <triple>/bin/. Only that file is packaged — per-target
+                // artifacts stay in dist for debugging but are not shipped.
+                let unified_bin = triple_dir.join("bin");
+                let scan_dir = if unified_bin.is_dir() {
+                    unified_bin
+                } else {
+                    triple_dir.clone()
+                };
+                for file in Self::executables_in(&scan_dir)? {
                     fs::copy(&file, dest_dir.join(file.file_name().unwrap()))?;
                     packaged += 1;
                 }

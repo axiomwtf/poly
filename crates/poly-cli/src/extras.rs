@@ -29,6 +29,7 @@ fn targets_of(config: &poly_config::Config, filter: Option<&str>) -> Vec<String>
 
 pub async fn cmd_test(target: Option<String>, _coverage: bool, _benchmark: bool) -> Result<()> {
     let config = load_config()?;
+    crate::inject_secrets(&config);
 
     // pre-test hook
     if let Some(hooks) = &config.hooks {

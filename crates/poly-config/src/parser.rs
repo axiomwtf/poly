@@ -3,7 +3,7 @@
 use crate::model::*;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
-use tracing::debug;
+use tracing::{debug, warn};
 
 /// Parse a poly.ini file
 pub fn parse_poly_ini(path: &str) -> Result<Config> {
@@ -19,12 +19,14 @@ pub fn parse_poly_ini(path: &str) -> Result<Config> {
 }
 
 fn parse_ini_content(content: &str) -> Result<Config> {
-    let mut sections: Vec<(String, HashMap<String, String>)> = Vec::new();
+    let mut sections: Vec<(String, HashMap<String, String>, HashMap<String, usize>)> = Vec::new();
     let mut current_section: Option<String> = None;
     let mut current_props: HashMap<String, String> = HashMap::new();
+    let mut current_lines: HashMap<String, usize> = HashMap::new();
 
-    for line in content.lines() {
-        let line = line.trim();
+    for (line_idx, raw_line) in content.lines().enumerate() {
+        let line = raw_line.trim();
+        let line_no = line_idx + 1;
 
         // Skip empty lines and comments
         if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
@@ -35,7 +37,7 @@ fn parse_ini_content(content: &str) -> Result<Config> {
         if line.starts_with('[') && line.ends_with(']') {
             // Save previous section
             if let Some(name) = current_section.take() {
-                sections.push((name, std::mem::take(&mut current_props)));
+                sections.push((name, std::mem::take(&mut current_props), std::mem::take(&mut current_lines)));
             }
             current_section = Some(line[1..line.len()-1].to_string());
             continue;
@@ -45,19 +47,51 @@ fn parse_ini_content(content: &str) -> Result<Config> {
         if let Some((key, value)) = line.split_once('=') {
             let key = key.trim().to_string();
             let value = value.trim().to_string();
-            current_props.insert(key, value);
+            current_props.insert(key.clone(), value);
+            current_lines.insert(key, line_no);
         }
     }
 
     // Save last section
     if let Some(name) = current_section.take() {
-        sections.push((name, current_props));
+        sections.push((name, current_props, current_lines));
     }
 
     build_config(sections)
 }
 
-fn build_config(sections: Vec<(String, HashMap<String, String>)>) -> Result<Config> {
+/// Spec §5.3: config keys must be camelCase — lowercase start, no hyphens,
+/// underscores or dots within each hierarchy segment. Dependency names are
+/// exempt (they are external package names).
+fn is_camel_case_key(key: &str) -> bool {
+    key.split('.').all(|seg| {
+        let mut chars = seg.chars();
+        match chars.next() {
+            Some(c) if c.is_ascii_lowercase() => {}
+            _ => return false,
+        }
+        chars.all(|c| c.is_ascii_alphanumeric())
+    })
+}
+
+/// snake_case / kebab-case → camelCase suggestion for warnings.
+fn camel_case_suggestion(key: &str) -> String {
+    let mut out = String::new();
+    let mut upper_next = false;
+    for c in key.chars() {
+        if c == '_' || c == '-' {
+            upper_next = true;
+        } else if upper_next {
+            out.extend(c.to_uppercase());
+            upper_next = false;
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+fn build_config(sections: Vec<(String, HashMap<String, String>, HashMap<String, usize>)>) -> Result<Config> {
     let mut project = None;
     let mut workspace = None;
     let mut targets = HashMap::new();
@@ -78,7 +112,21 @@ fn build_config(sections: Vec<(String, HashMap<String, String>)>) -> Result<Conf
     let mut hooks = None;
     let mut secrets = None;
 
-    for (section_name, props) in sections {
+    for (section_name, props, key_lines) in sections {
+        // Spec §5.3: warn on non-camelCase keys (dependency names exempt).
+        if !section_name.starts_with("dependencies") {
+            for key in props.keys() {
+                if !is_camel_case_key(key) {
+                    let line = key_lines.get(key).copied().unwrap_or(0);
+                    warn!(
+                        "poly.ini:{}: key '{}' is not camelCase, use '{}'",
+                        line,
+                        key,
+                        camel_case_suggestion(key)
+                    );
+                }
+            }
+        }
         match section_name.as_str() {
             "project" => {
                 project = Some(Project {
@@ -242,6 +290,20 @@ fn build_config(sections: Vec<(String, HashMap<String, String>)>) -> Result<Conf
                         command: cmd.clone(),
                     }),
                 });
+            }
+            // Spec §5.1/§13.4: [hooks.preBuild] command = ./script.sh
+            name if name.starts_with("hooks.") => {
+                if let Some(command) = props.get("command") {
+                    let h = hooks.get_or_insert_with(HooksConfig::default);
+                    let hook = Hook { command: command.clone() };
+                    match name.strip_prefix("hooks.").unwrap() {
+                        "preBuild" => h.pre_build = Some(hook),
+                        "postBuild" => h.post_build = Some(hook),
+                        "preTest" => h.pre_test = Some(hook),
+                        "postTest" => h.post_test = Some(hook),
+                        _ => {}
+                    }
+                }
             }
             "secrets" => {
                 secrets = Some(props.clone());

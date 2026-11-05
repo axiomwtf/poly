@@ -272,7 +272,23 @@ impl DependencyCompiler {
         let mut root_ids = Vec::new();
 
         for (name, spec) in &needed_deps {
+            // Spec §6.1 sources: git:/path: are whole-value specs, and
+            // |poly / |system are registry markers — not feature lists.
+            if spec.starts_with("git:") || spec.starts_with("path:") {
+                tracing::warn!(
+                    "dependency '{}': '{}' source is not yet supported; skipping",
+                    name, spec
+                );
+                continue;
+            }
             let (version_req, features) = Self::parse_version_spec(spec);
+            if matches!(features.as_deref(), Some("poly") | Some("system")) {
+                tracing::warn!(
+                    "dependency '{}': non-crates.io source '{}' is not yet supported; skipping",
+                    name, spec
+                );
+                continue;
+            }
             let id = self.ensure_package(&mut state, name, &version_req).await?;
             root_ids.push(id.clone());
 

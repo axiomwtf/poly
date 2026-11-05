@@ -149,6 +149,8 @@ impl GoDriver {
             cmd.env(key, value);
         }
 
+        self.apply_windows_toolchain(&mut cmd, target);
+
         debug!("Running: {:?}", cmd);
 
         let output_result = cmd.output().context("Failed to execute go build")?;
@@ -159,6 +161,170 @@ impl GoDriver {
         }
 
         info!("Successfully compiled Go target: {}", target.name);
+        Ok(())
+    }
+
+    /// For windows targets, cgo needs the mingw cross toolchain: point CC at
+    /// x86_64-w64-mingw32-gcc and put the locally extracted mingw bin dir on
+    /// PATH (same toolchain the Rust driver uses).
+    fn apply_windows_toolchain(&self, cmd: &mut Command, target: &GoTarget) {
+        if target.goos.as_deref() != Some("windows") {
+            return;
+        }
+        cmd.env("CC", "x86_64-w64-mingw32-gcc");
+        if let Ok(home) = std::env::var("HOME") {
+            let mingw_bin = std::path::PathBuf::from(home).join(".local/mingw/usr/bin");
+            if mingw_bin.exists() {
+                let mut paths = vec![mingw_bin];
+                if let Ok(path) = std::env::var("PATH") {
+                    paths.extend(std::env::split_paths(&path));
+                }
+                if let Ok(joined) = std::env::join_paths(paths) {
+                    cmd.env("PATH", joined);
+                }
+            }
+        }
+    }
+
+    /// Spec §7.3: compile with `go tool compile` + `go tool link` directly.
+    /// No go.mod — sources are staged into GOPATH layout and importcfg is
+    /// generated from `go list -export`. Only for pure-Go packages; files
+    /// importing "C" need the cgo pipeline (`go build` path).
+    pub fn compile_native(
+        &self,
+        target: &GoTarget,
+        output: &Path,
+        work_dir: &Path,
+    ) -> Result<()> {
+        debug!("Native Go toolchain build: {}", target.name);
+
+        let import_path = target.module.trim_start_matches("./").to_string();
+        // Stage into a per-build GOPATH so we never pollute the user's.
+        // Must be absolute: `go list` rejects relative GOPATH entries.
+        let gopath = std::path::absolute(work_dir)?.join(".gopath");
+        let pkg_dir = gopath.join("src").join(&import_path);
+        if pkg_dir.exists() {
+            std::fs::remove_dir_all(&pkg_dir)?;
+        }
+        std::fs::create_dir_all(&pkg_dir)?;
+
+        let mut go_files = Vec::new();
+        for src in &target.sources {
+            if let Some(name) = src.file_name() {
+                let dest = pkg_dir.join(name);
+                std::fs::copy(src, &dest)?;
+                go_files.push(dest);
+            }
+        }
+        if go_files.is_empty() {
+            anyhow::bail!("No Go source files for target {}", target.name);
+        }
+
+        let mut env = |cmd: &mut Command| {
+            cmd.env("GO111MODULE", "off")
+                .env("GOPATH", &gopath)
+                .env("CGO_ENABLED", "0");
+            if let Some(goos) = &target.goos {
+                cmd.env("GOOS", goos);
+            }
+            if let Some(goarch) = &target.goarch {
+                cmd.env("GOARCH", goarch);
+            }
+        };
+
+        // importcfg: map every transitive dependency to its export .a
+        let mut list = Command::new(&self.go_path);
+        list.arg("list")
+            .arg("-export")
+            .arg("-deps")
+            .arg("-f")
+            .arg("{{.ImportPath}}|{{.Export}}")
+            .arg(&import_path)
+            .current_dir(&pkg_dir);
+        env(&mut list);
+        self.apply_windows_toolchain(&mut list, target);
+        let list_out = list.output().context("go list failed")?;
+        if !list_out.status.success() {
+            anyhow::bail!(
+                "go list failed: {}",
+                String::from_utf8_lossy(&list_out.stderr)
+            );
+        }
+        let mut importcfg = String::new();
+        for line in String::from_utf8_lossy(&list_out.stdout).lines() {
+            if let Some((pkg, export)) = line.split_once('|') {
+                if !export.is_empty() && pkg != import_path {
+                    importcfg.push_str(&format!("packagefile {}={}\n", pkg, export));
+                }
+            }
+        }
+        let importcfg_path = work_dir.join("importcfg.txt");
+        std::fs::write(&importcfg_path, &importcfg)?;
+
+        // `package main` must compile with -p main or the linker can't find
+        // the entrypoint symbol.
+        let compile_pkg = if target.target_type == "bin" {
+            "main".to_string()
+        } else {
+            import_path.clone()
+        };
+
+        // go tool compile -> package archive
+        let obj = work_dir.join(format!("{}.a", target.name.replace('-', "_")));
+        let mut compile = Command::new(&self.go_path);
+        compile
+            .arg("tool")
+            .arg("compile")
+            .arg("-o")
+            .arg(&obj)
+            .arg("-p")
+            .arg(&compile_pkg)
+            .arg("-importcfg")
+            .arg(&importcfg_path);
+        for f in &go_files {
+            compile.arg(f);
+        }
+        env(&mut compile);
+        self.apply_windows_toolchain(&mut compile, target);
+        let out = compile.output().context("go tool compile failed")?;
+        if !out.status.success() {
+            anyhow::bail!(
+                "go tool compile failed: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+
+        // go tool link -> executable (or c-archive/shared for lib targets)
+        if target.target_type == "bin" {
+            let mut link = Command::new(&self.go_path);
+            link.arg("tool")
+                .arg("link")
+                .arg("-o")
+                .arg(output)
+                .arg("-importcfg")
+                .arg(&importcfg_path);
+            if let Some(goos) = &target.goos {
+                link.arg("-H").arg(match goos.as_str() {
+                    "windows" => "windows",
+                    _ => "linux",
+                });
+            }
+            link.arg(&obj);
+            env(&mut link);
+            self.apply_windows_toolchain(&mut link, target);
+            let out = link.output().context("go tool link failed")?;
+            if !out.status.success() {
+                anyhow::bail!(
+                    "go tool link failed: {}",
+                    String::from_utf8_lossy(&out.stderr)
+                );
+            }
+        } else {
+            // Library targets: the compiled .a is the artifact.
+            std::fs::copy(&obj, output)?;
+        }
+
+        info!("Native Go build complete: {}", target.name);
         Ok(())
     }
 
@@ -231,6 +397,10 @@ impl GoDriver {
 
         debug!("Compiling with CGO support");
 
+        let go_mod_path = work_dir.join("go.mod");
+        self.create_go_mod(&go_mod_path, target)?;
+        self.download_dependencies(work_dir, target)?;
+
         // Set CGO environment variables
         let mut cmd = Command::new(&self.go_path);
         cmd.arg("build");
@@ -263,6 +433,8 @@ impl GoDriver {
             cmd.env("GOARCH", goarch);
         }
 
+        self.apply_windows_toolchain(&mut cmd, target);
+
         debug!("Running: {:?}", cmd);
 
         let output_result = cmd.output().context("Failed to execute go build with CGO")?;
@@ -273,6 +445,68 @@ impl GoDriver {
         }
 
         info!("Successfully compiled Go target with CGO: {}", target.name);
+        Ok(())
+    }
+
+    /// Build the package as a C archive (`-buildmode=c-archive`) so its
+    /// code can be linked into an executable produced by another language.
+    /// Produces a static `.a` plus a `.h` export header next to `output`.
+    pub fn build_c_archive(
+        &self,
+        target: &GoTarget,
+        output: &Path,
+        work_dir: &Path,
+    ) -> Result<()> {
+        debug!("Building Go target as C archive: {}", target.name);
+
+        let mut env = std::collections::HashMap::new();
+        env.insert("GOPATH".to_string(), self.gopath.display().to_string());
+        env.insert("GO111MODULE".to_string(), "on".to_string());
+        env.insert("CGO_ENABLED".to_string(), "1".to_string());
+        if let Some(goos) = &target.goos {
+            env.insert("GOOS".to_string(), goos.clone());
+        }
+        if let Some(goarch) = &target.goarch {
+            env.insert("GOARCH".to_string(), goarch.clone());
+        }
+
+        let go_mod_path = work_dir.join("go.mod");
+        self.create_go_mod(&go_mod_path, target)?;
+        self.download_dependencies(work_dir, target)?;
+
+        let mut cmd = Command::new(&self.go_path);
+        cmd.arg("build");
+        cmd.arg("-buildmode=c-archive");
+        cmd.arg("-o");
+        cmd.arg(output);
+
+        for tag in &target.build_tags {
+            cmd.arg("-tags");
+            cmd.arg(tag);
+        }
+        for flag in &target.flags {
+            cmd.arg(flag);
+        }
+        cmd.arg(&target.package);
+        cmd.current_dir(work_dir);
+
+        for (key, value) in &env {
+            cmd.env(key, value);
+        }
+
+        self.apply_windows_toolchain(&mut cmd, target);
+
+        debug!("Running: {:?}", cmd);
+        let output_result = cmd
+            .output()
+            .context("Failed to execute go build -buildmode=c-archive")?;
+
+        if !output_result.status.success() {
+            let stderr = String::from_utf8_lossy(&output_result.stderr);
+            anyhow::bail!("Go c-archive build failed: {}", stderr);
+        }
+
+        info!("Built Go C archive: {}", target.name);
         Ok(())
     }
 

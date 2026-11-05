@@ -4,7 +4,7 @@
 
 Poly is a build system and package manager for Rust, C/C++ and Go, with one manifest (`poly.ini`), one lock file (`poly.lock`), and one command set. It invokes `rustc`, C/C++ compilers, and the Go toolchain directly — no Cargo, CMake, or Make involved in user-project builds.
 
-> **Status:** All six spec phases implemented. 
+> **Status:** All six spec phases implemented.
 
 ## Features
 

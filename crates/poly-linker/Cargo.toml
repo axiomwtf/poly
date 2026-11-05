@@ -10,6 +10,7 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
 tracing = { workspace = true }
+walkdir = { workspace = true }
 poly-rust = { path = "../poly-rust" }
 poly-c = { path = "../poly-c" }
 poly-go = { path = "../poly-go" }

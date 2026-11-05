@@ -162,7 +162,7 @@ pub struct CrossConfig {
 }
 
 /// Hooks configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct HooksConfig {
     pub pre_build: Option<Hook>,
     pub post_build: Option<Hook>,

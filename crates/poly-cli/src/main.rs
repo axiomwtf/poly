@@ -6,6 +6,7 @@ mod extras;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use poly_config::parse_poly_ini;
+use poly_linker::{CBuild, GoBuild, LinkUnit, RustBuild};
 use poly_resolver::{DependencyResolver, LockEntry, LockFile};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -39,6 +40,9 @@ enum Commands {
         /// Skip creating the combined .vfsx.tar.zst package after building
         #[arg(long)]
         no_package: bool,
+        /// Show what is being rebuilt (spec §13.3)
+        #[arg(long)]
+        verbose: bool,
     },
     /// Add a dependency
     Add {
@@ -206,12 +210,16 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize tracing
-    // Default to INFO; set RUST_LOG=debug for verbose compiler output.
+    let cli = Cli::parse();
+
+    // Initialize tracing. Default to INFO; --verbose or RUST_LOG raises it.
+    let verbose = matches!(cli.command, Commands::Build { verbose: true, .. });
     tracing_subscriber::fmt()
         .with_env_filter({
             let rust_log = std::env::var("RUST_LOG").unwrap_or_default();
-            if rust_log.trim().is_empty() {
+            if verbose {
+                tracing_subscriber::EnvFilter::new("debug")
+            } else if rust_log.trim().is_empty() {
                 tracing_subscriber::EnvFilter::new("info")
             } else {
                 tracing_subscriber::EnvFilter::try_from_default_env()
@@ -220,11 +228,9 @@ async fn main() -> Result<()> {
         })
         .init();
 
-    let cli = Cli::parse();
-
     match cli.command {
         Commands::Init { name } => cmd_init(name),
-        Commands::Build { target, release, config, no_package } => {
+        Commands::Build { target, release, config, no_package, verbose: _ } => {
             cmd_build(target, release, config, no_package).await
         }
         Commands::Add { dependency } => cmd_add(dependency),
@@ -336,12 +342,51 @@ targets = rust:lib
     Ok(())
 }
 
-async fn cmd_build(_target: Option<String>, release: bool, config_path: Option<String>, no_package: bool) -> Result<()> {
+/// Spec §13.7: resolve `[secrets]` entries (`env:VAR`, `vault:path`, or a
+/// literal) and inject them as environment variables for every compiler and
+/// tool subprocess spawned during the build.
+pub(crate) fn inject_secrets(config: &poly_config::Config) {
+    let Some(secrets) = &config.secrets else {
+        return;
+    };
+    for (key, spec) in secrets {
+        let value = if let Some(var) = spec.strip_prefix("env:") {
+            match std::env::var(var) {
+                Ok(v) => Some(v),
+                Err(_) => {
+                    warn!("secret '{}': env var {} is not set", key, var);
+                    None
+                }
+            }
+        } else if let Some(path) = spec.strip_prefix("vault:") {
+            let vault = std::env::var("HOME")
+                .map(|h| PathBuf::from(h).join(".config/poly/vault").join(path))
+                .unwrap_or_else(|_| PathBuf::from(path));
+            match std::fs::read_to_string(&vault) {
+                Ok(v) => Some(v.trim().to_string()),
+                Err(e) => {
+                    warn!("secret '{}': cannot read vault file {}: {}", key, vault.display(), e);
+                    None
+                }
+            }
+        } else {
+            Some(spec.clone())
+        };
+        if let Some(v) = value {
+            // SAFETY: runs once during command dispatch, before any build
+            // worker threads exist; env mutation is process-global.
+            unsafe { std::env::set_var(key, v) };
+        }
+    }
+}
+
+async fn cmd_build(target: Option<String>, release: bool, config_path: Option<String>, no_package: bool) -> Result<()> {
     info!("Building project");
 
     // Load configuration
     let config_file = config_path.unwrap_or_else(|| "poly.ini".to_string());
     let config = parse_poly_ini(&config_file)?;
+    inject_secrets(&config);
     debug!("Loaded config for project: {}", config.project.name);
 
     // Run pre-build hook if configured
@@ -423,64 +468,106 @@ async fn cmd_build(_target: Option<String>, release: bool, config_path: Option<S
         };
 
         let mut compiled_workspace: HashMap<String, PathBuf> = HashMap::new();
-        let mut platform_binaries: Vec<PathBuf> = Vec::new();
-        let build_targets = parse_build_targets(&config)?;
-        
+        let mut link_units: Vec<LinkUnit> = Vec::new();
+        let mut build_targets = parse_build_targets(&config)?;
+
+        // `poly build --target rust:lib` builds a single target (spec §7.4).
+        if let Some(spec) = &target {
+            build_targets.retain(|id| {
+                id == spec
+                    || config
+                        .targets
+                        .get(id)
+                        .map(|tc| format!("{}:{}", tc.language, id) == *spec)
+                        .unwrap_or(false)
+            });
+            if build_targets.is_empty() {
+                anyhow::bail!("No matching build target: {}", spec);
+            }
+        }
+
+        // When targets span multiple languages, bin targets defer their final
+        // link to the unified step so foreign objects/archives can be merged
+        // (spec §8.2: one executable per platform).
+        let has_c = build_targets.iter().any(|id| {
+            config.targets.get(id).map(|t| matches!(t.language.as_str(), "c" | "cpp")).unwrap_or(false)
+        });
+        let has_go = build_targets.iter().any(|id| {
+            config.targets.get(id).map(|t| t.language == "go").unwrap_or(false)
+        });
+        let has_rust = build_targets.iter().any(|id| {
+            config.targets.get(id).map(|t| t.language == "rust").unwrap_or(false)
+        });
+        let defer_rust_bin = has_c || has_go;
+        let defer_c_bin = has_rust || has_go;
+
         for target_id in build_targets {
             if let Some(target_config) = config.targets.get(&target_id) {
                 match target_config.language.as_str() {
                     "rust" => {
-                        let artifact_path = build_rust_target(
-                            &target_id, 
-                            target_config, 
-                            &config, 
-                            &platform_dir, 
-                            &compiled_deps, 
+                        if let Some(build) = build_rust_target(
+                            &target_id,
+                            target_config,
+                            &config,
+                            &platform_dir,
+                            &compiled_deps,
                             &compiled_workspace,
                             target_triple,
-                        )?;
-                        // Store the compiled artifact for dependents
-                        let crate_name = target_id.replace('-', "_");
-                        if let Some(path) = artifact_path {
-                            if path.exists() {
-                                compiled_workspace.insert(crate_name, path.clone());
-                                // Track binaries for VFSX packaging
-                                if target_config.type_ == "bin" {
-                                    platform_binaries.push(path);
-                                }
+                            defer_rust_bin && target_config.type_ == "bin",
+                        )? {
+                            // Store the compiled artifact for dependents
+                            let crate_name = target_id.replace('-', "_");
+                            if build.output.exists() {
+                                compiled_workspace.insert(crate_name, build.output.clone());
                             }
+                            link_units.push(LinkUnit {
+                                id: target_id.clone(),
+                                language: "rust".to_string(),
+                                kind: target_config.type_.clone(),
+                                artifact: Some(build.output.clone()),
+                                rust: Some(build),
+                                c: None,
+                                go: None,
+                            });
                         }
                     }
                     "c" | "cpp" => {
-                        let artifact_path = build_c_target(
-                            &target_id, 
-                            target_config, 
-                            &config, 
+                        if let Some(build) = build_c_target(
+                            &target_id,
+                            target_config,
+                            &config,
                             &platform_dir,
                             target_triple,
-                        )?;
-                        if target_config.type_ == "bin" {
-                            if let Some(path) = artifact_path {
-                                if path.exists() {
-                                    platform_binaries.push(path);
-                                }
-                            }
+                            defer_c_bin && target_config.type_ == "bin",
+                        )? {
+                            link_units.push(LinkUnit {
+                                id: target_id.clone(),
+                                language: target_config.language.clone(),
+                                kind: target_config.type_.clone(),
+                                artifact: Some(build.output.clone()),
+                                rust: None,
+                                c: Some(build),
+                                go: None,
+                            });
                         }
                     }
                     "go" => {
-                        let artifact_path = build_go_target(
-                            &target_id, 
-                            target_config, 
-                            &config, 
+                        if let Some(build) = build_go_target(
+                            &target_id,
+                            target_config,
+                            &config,
                             &platform_dir,
                             target_triple,
-                        )?;
-                        if target_config.type_ == "bin" {
-                            if let Some(path) = artifact_path {
-                                if path.exists() {
-                                    platform_binaries.push(path);
-                                }
-                            }
+                        )? {
+                            link_units.push(LinkUnit {
+                                id: target_id.clone(),
+                                language: "go".to_string(),
+                                kind: target_config.type_.clone(),
+                                artifact: Some(build.output.clone()),
+                                rust: None,
+                                c: None,
+                                go: Some(build),
+                            });
                         }
                     }
                     _ => {
@@ -489,10 +576,16 @@ async fn cmd_build(_target: Option<String>, release: bool, config_path: Option<S
                 }
             }
         }
-        
-        // Collect binaries for this platform
-        for binary in platform_binaries {
-            all_binaries.push((platform.to_string(), binary));
+
+        // Spec §8.2: link every target produced for this platform into ONE
+        // executable via poly-linker.
+        if let Some(unified) = poly_linker::link_platform_executable(
+            &link_units,
+            &platform_dir,
+            target_triple,
+            &config.project.name,
+        )? {
+            all_binaries.push((platform.to_string(), unified));
         }
         first_platform = false;
     }
@@ -699,7 +792,8 @@ fn build_rust_target(
     compiled_deps: &std::collections::HashMap<String, poly_core::CompiledDependency>,
     compiled_workspace: &HashMap<String, PathBuf>,
     target_triple: &str,
-) -> Result<Option<PathBuf>> {
+    defer_link: bool,
+) -> Result<Option<RustBuild>> {
     info!("Building Rust target: {} for {}", target_id, target_triple);
 
     let sources = expand_globs(&target_config.sources)?;
@@ -759,16 +853,25 @@ fn build_rust_target(
     let mut rust_target_with_deps = rust_target.clone();
     rust_target_with_deps.flags = all_flags;
 
-    // Compile - dependencies are passed via --extern flags in target.flags
-    driver.compile(
-        &sources[0],
-        &output,
-        &rust_target_with_deps,
-        &[], // Empty - we use --extern flags in target.flags
-        None, // No build script for MVP
-    )?;
+    // When foreign-language targets will be merged by poly-linker, the bin's
+    // final link is deferred — the unified step performs the only rustc
+    // invocation, with foreign archives passed via -C link-args.
+    if !(defer_link && rust_target.crate_type == "bin") {
+        // Compile - dependencies are passed via --extern flags in target.flags
+        driver.compile(
+            &sources[0],
+            &output,
+            &rust_target_with_deps,
+            &[], // Empty - we use --extern flags in target.flags
+            None, // No build script for MVP
+        )?;
+    }
 
-    Ok(Some(output))
+    Ok(Some(RustBuild {
+        output,
+        source: sources[0].clone(),
+        target: rust_target_with_deps,
+    }))
 }
 
 /// Build --extern/-L/-l flags for a rust target: direct deps for the given
@@ -833,23 +936,111 @@ pub(crate) fn rust_dep_args(
     args
 }
 
+/// Resolve `[dependencies.c]` entries into compiler/linker inputs.
+/// `name = ver|system` goes through pkg-config (spec §6.1/§7.2); other
+/// sources are reported and skipped.
+fn resolve_c_dependencies(
+    config: &poly_config::Config,
+    target_triple: &str,
+) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<String>, Vec<String>) {
+    let mut include_dirs = Vec::new();
+    let mut library_dirs = Vec::new();
+    let mut libraries = Vec::new();
+    let mut flags = Vec::new();
+
+    for (name, spec) in &config.dependencies.c {
+        let source = spec.rsplit('|').next().unwrap_or("");
+        if source == "system" {
+            if target_triple.contains("windows") {
+                warn!("system dependency '{}' skipped for windows target", name);
+                continue;
+            }
+            match pkg_config_flags(name) {
+                Ok((cflags, libs)) => {
+                    for f in cflags.into_iter().chain(libs) {
+                        if let Some(dir) = f.strip_prefix("-I") {
+                            include_dirs.push(PathBuf::from(dir));
+                        } else if let Some(dir) = f.strip_prefix("-L") {
+                            library_dirs.push(PathBuf::from(dir));
+                        } else if let Some(lib) = f.strip_prefix("-l") {
+                            libraries.push(lib.to_string());
+                        } else {
+                            flags.push(f);
+                        }
+                    }
+                }
+                Err(e) => warn!("pkg-config failed for '{}': {}", name, e),
+            }
+        } else if source == "poly" || spec.starts_with("git:") || spec.starts_with("path:") {
+            warn!("C dependency '{}': source '{}' is not yet supported", name, spec);
+        } else {
+            warn!("C dependency '{}': crates.io source is not yet supported for C", name);
+        }
+    }
+
+    (include_dirs, library_dirs, libraries, flags)
+}
+
+/// `pkg-config --cflags --libs <name>` split into flag tokens.
+fn pkg_config_flags(name: &str) -> Result<(Vec<String>, Vec<String>)> {
+    let cflags = Command::new("pkg-config")
+        .args(["--cflags", name])
+        .output()
+        .context("pkg-config not found")?;
+    let libs = Command::new("pkg-config")
+        .args(["--libs", name])
+        .output()
+        .context("pkg-config not found")?;
+    if !cflags.status.success() || !libs.status.success() {
+        anyhow::bail!("pkg-config has no package '{}'", name);
+    }
+    let split = |o: &std::process::Output| {
+        String::from_utf8_lossy(&o.stdout)
+            .split_whitespace()
+            .map(|s| s.to_string())
+            .collect()
+    };
+    Ok((split(&cflags), split(&libs)))
+}
+
 fn build_c_target(
     target_id: &str,
     target_config: &poly_config::Target,
-    _config: &poly_config::Config,
+    config: &poly_config::Config,
     output_dir: &Path,
     target_triple: &str,
-) -> Result<Option<PathBuf>> {
+    defer_link: bool,
+) -> Result<Option<CBuild>> {
     info!("Building C/C++ target: {} for {}", target_id, target_triple);
 
-    let sources = expand_globs(&target_config.sources)?;
-    if sources.is_empty() {
+    let all_sources = expand_globs(&target_config.sources)?;
+    if all_sources.is_empty() {
         info!("No sources found for target {}", target_id);
+        return Ok(None);
+    }
+    // Headers are inputs for include scanning, not compile units — compiling
+    // them produces PCH objects that corrupt the archive.
+    let sources: Vec<PathBuf> = all_sources
+        .into_iter()
+        .filter(|p| {
+            !matches!(
+                p.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase().as_str(),
+                "h" | "hh" | "hpp" | "hxx" | "h++" | "cuh"
+            )
+        })
+        .collect();
+    if sources.is_empty() {
+        info!("No compilable sources found for target {}", target_id);
         return Ok(None);
     }
 
     let base_driver = poly_c::CDriver::new()?;
     let driver = base_driver.for_target(target_triple)?;
+
+    // System dependencies via pkg-config (spec §7.2: pkg-config for system
+    // dependencies only, not as a build system).
+    let (dep_includes, dep_libdirs, dep_libs, dep_flags) =
+        resolve_c_dependencies(config, target_triple);
 
     // Create C target
     let c_target = poly_c::CTarget {
@@ -864,10 +1055,14 @@ fn build_c_target(
         },
         sources: sources.clone(),
         headers: Vec::new(), // TODO: Extract headers
-        include_dirs: Vec::new(), // TODO: Parse from config
-        library_dirs: Vec::new(), // TODO: Parse from config
-        libraries: Vec::new(), // TODO: Parse from config
-        flags: target_config.flags.clone(),
+        include_dirs: dep_includes,
+        library_dirs: dep_libdirs,
+        libraries: dep_libs,
+        flags: {
+            let mut f = target_config.flags.clone();
+            f.extend(dep_flags);
+            f
+        },
         defines: std::collections::HashMap::new(), // TODO: Parse from config
         dependencies: Vec::new(), // TODO: Resolve from config
         target_triple: target_triple.to_string(),
@@ -895,10 +1090,19 @@ fn build_c_target(
         _ => target_dir.join(format!("lib{}.a", target_id)),
     };
 
-    // Link
-    driver.link(&c_target, &objects, &output)?;
+    // Link — deferred for bin targets when foreign languages will be merged
+    // by poly-linker (spec §8.2 single-executable packaging).
+    if !(defer_link && c_target.target_type == "bin") {
+        driver.link(&c_target, &objects, &output)?;
+    } else {
+        info!("Deferring link of C/C++ bin target {} to unified link step", target_id);
+    }
 
-    Ok(Some(output))
+    Ok(Some(CBuild {
+        output,
+        target: c_target,
+        objects_dir: target_output_dir,
+    }))
 }
 
 fn build_go_target(
@@ -907,7 +1111,7 @@ fn build_go_target(
     config: &poly_config::Config,
     output_dir: &Path,
     target_triple: &str,
-) -> Result<Option<PathBuf>> {
+) -> Result<Option<GoBuild>> {
     info!("Building Go target: {} for {}", target_id, target_triple);
 
     let sources = expand_globs(&target_config.sources)?;
@@ -987,14 +1191,36 @@ fn build_go_target(
     go_target.goos = goos;
     go_target.goarch = goarch;
 
-    // Compile
-    if go_target.cgo {
+    // Spec §7.3: pure-Go packages go through `go tool compile`/`go tool link`
+    // directly (no go.mod). Packages using cgo keep the `go build` path since
+    // they need the cgo tool's generated files.
+    let uses_cgo = go_target.cgo
+        || sources.iter().any(|s| {
+            std::fs::read_to_string(s)
+                .map(|c| {
+                    c.contains("import \"C\"")
+                        || c.lines().any(|l| l.trim() == "\"C\"")
+                })
+                .unwrap_or(false)
+        });
+
+    if uses_cgo {
         driver.compile_with_cgo(&go_target, &output, &work_dir, &[])?;
     } else {
-        driver.compile(&go_target, &output, &work_dir)?;
+        match driver.compile_native(&go_target, &output, &work_dir) {
+            Ok(()) => {}
+            Err(e) => {
+                info!("go tool compile/link failed ({}), falling back to go build", e);
+                driver.compile(&go_target, &output, &work_dir)?;
+            }
+        }
     }
 
-    Ok(Some(output))
+    Ok(Some(GoBuild {
+        output,
+        target: go_target,
+        work_dir,
+    }))
 }
 
 /// Expand glob patterns in source lists
