@@ -14,3 +14,7 @@ tracing = { workspace = true }
 tokio = { workspace = true }
 sha2 = { workspace = true }
 walkdir = { workspace = true }
+poly-registry = { path = "../poly-registry" }
+flate2 = "1.0"
+tar = "0.4"
+dirs = "5.0"

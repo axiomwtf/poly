@@ -157,6 +157,19 @@ async fn cmd_build(_target: Option<String>, _release: bool, config_path: Option<
     let config = parse_poly_ini(&config_file)?;
     debug!("Loaded config for project: {}", config.project.name);
 
+    // Create output directory
+    let output_dir = PathBuf::from("target");
+    std::fs::create_dir_all(&output_dir)?;
+
+    // Compile dependencies first
+    let compiled_deps = if !config.dependencies.rust.is_empty() {
+        info!("Compiling Rust dependencies...");
+        let dep_compiler = poly_core::DependencyCompiler::new(output_dir.clone())?;
+        dep_compiler.compile_dependencies(&config.dependencies.rust).await?
+    } else {
+        std::collections::HashMap::new()
+    };
+
     // Resolve dependencies
     let resolver = DependencyResolver::new();
     let entries = resolver.resolve(
@@ -172,15 +185,11 @@ async fn cmd_build(_target: Option<String>, _release: bool, config_path: Option<
     }
     lockfile.write("poly.lock")?;
 
-    // Create output directory
-    let output_dir = PathBuf::from("target");
-    std::fs::create_dir_all(&output_dir)?;
-
     // Build each target
     for (target_id, target_config) in &config.targets {
         match target_config.language.as_str() {
             "rust" => {
-                build_rust_target(target_id, target_config, &config, &output_dir)?;
+                build_rust_target(target_id, target_config, &config, &output_dir, &compiled_deps)?;
             }
             "c" | "cpp" => {
                 build_c_target(target_id, target_config, &config, &output_dir)?;
@@ -204,6 +213,7 @@ fn build_rust_target(
     target_config: &poly_config::Target,
     config: &poly_config::Config,
     output_dir: &Path,
+    compiled_deps: &std::collections::HashMap<String, poly_core::CompiledDependency>,
 ) -> Result<()> {
     info!("Building Rust target: {}", target_id);
 
@@ -240,12 +250,42 @@ fn build_rust_target(
         _ => output_dir.join(format!("lib{}.rlib", rust_target.name)),
     };
 
+    // Get dependency paths from compiled dependencies
+    let dep_paths: Vec<PathBuf> = compiled_deps.values()
+        .map(|dep| dep.rlib_path.clone())
+        .collect();
+
+    // Build --extern flags
+    let mut extern_args = Vec::new();
+    for (name, dep) in compiled_deps {
+        extern_args.push("--extern".to_string());
+        extern_args.push(format!("{}={}", name.replace('-', "_"), dep.rlib_path.display()));
+    }
+
+    // Get library search paths
+    let mut lib_paths = Vec::new();
+    for dep in compiled_deps.values() {
+        if let Some(parent) = dep.rlib_path.parent() {
+            lib_paths.push("-L".to_string());
+            lib_paths.push(parent.display().to_string());
+        }
+    }
+
+    // Add extern flags to target flags
+    let mut all_flags = rust_target.flags.clone();
+    all_flags.extend(extern_args);
+    all_flags.extend(lib_paths);
+
+    // Update target with new flags
+    let mut rust_target_with_deps = rust_target.clone();
+    rust_target_with_deps.flags = all_flags;
+
     // Compile
     driver.compile(
         &sources[0],
         &output,
-        &rust_target,
-        &[], // No dependencies for MVP
+        &rust_target_with_deps,
+        &dep_paths,
         None, // No build script for MVP
     )?;
 

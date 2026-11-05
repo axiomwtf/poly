@@ -1,4 +1,104 @@
 [lock]
 version = 1
-generated = 2026-11-05T17:20:39.126310386+00:00
+generated = 2026-11-05T17:41:21.191821831+00:00
+
+[dependency.rust.tracing]
+version = 0.1
+checksum = sha256:0000000000000000000000000000000000000000000000000000000000000000
+source = https://crates.io
+
+[dependency.rust.xz2]
+version = 0.1
+checksum = sha256:0000000000000000000000000000000000000000000000000000000000000000
+source = https://crates.io
+
+[dependency.rust.anyhow]
+version = 1.0
+checksum = sha256:0000000000000000000000000000000000000000000000000000000000000000
+source = https://crates.io
+
+[dependency.rust.walkdir]
+version = 2.5
+checksum = sha256:0000000000000000000000000000000000000000000000000000000000000000
+source = https://crates.io
+
+[dependency.rust.reqwest]
+version = 0.12
+checksum = sha256:0000000000000000000000000000000000000000000000000000000000000000
+source = https://crates.io
+
+[dependency.rust.dirs]
+version = 5.0
+checksum = sha256:0000000000000000000000000000000000000000000000000000000000000000
+source = https://crates.io
+
+[dependency.rust.ed25519-dalek]
+version = 2.0
+checksum = sha256:0000000000000000000000000000000000000000000000000000000000000000
+source = https://crates.io
+
+[dependency.rust.clap]
+version = 4.5
+checksum = sha256:0000000000000000000000000000000000000000000000000000000000000000
+source = https://crates.io
+
+[dependency.rust.chrono]
+version = 0.4
+checksum = sha256:0000000000000000000000000000000000000000000000000000000000000000
+source = https://crates.io
+
+[dependency.rust.serde_json]
+version = 1.0
+checksum = sha256:0000000000000000000000000000000000000000000000000000000000000000
+source = https://crates.io
+
+[dependency.rust.hex]
+version = 0.4
+checksum = sha256:0000000000000000000000000000000000000000000000000000000000000000
+source = https://crates.io
+
+[dependency.rust.rand]
+version = 0.8
+checksum = sha256:0000000000000000000000000000000000000000000000000000000000000000
+source = https://crates.io
+
+[dependency.rust.rand_core]
+version = 0.6
+checksum = sha256:0000000000000000000000000000000000000000000000000000000000000000
+source = https://crates.io
+
+[dependency.rust.serde]
+version = 1.0
+checksum = sha256:0000000000000000000000000000000000000000000000000000000000000000
+source = https://crates.io
+
+[dependency.rust.tracing-subscriber]
+version = 0.3
+checksum = sha256:0000000000000000000000000000000000000000000000000000000000000000
+source = https://crates.io
+
+[dependency.rust.tokio]
+version = 1.40
+checksum = sha256:0000000000000000000000000000000000000000000000000000000000000000
+source = https://crates.io
+
+[dependency.rust.thiserror]
+version = 1.0
+checksum = sha256:0000000000000000000000000000000000000000000000000000000000000000
+source = https://crates.io
+
+[dependency.rust.tar]
+version = 0.4
+checksum = sha256:0000000000000000000000000000000000000000000000000000000000000000
+source = https://crates.io
+
+[dependency.rust.sha2]
+version = 0.10
+checksum = sha256:0000000000000000000000000000000000000000000000000000000000000000
+source = https://crates.io
+
+[dependency.rust.glob]
+version = 0.3
+checksum = sha256:0000000000000000000000000000000000000000000000000000000000000000
+source = https://crates.io
 
