@@ -1,0 +1,15 @@
+[package]
+name = "poly-linker"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+tracing = { workspace = true }
+poly-rust = { path = "../poly-rust" }
+poly-c = { path = "../poly-c" }
+poly-go = { path = "../poly-go" }

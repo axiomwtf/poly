@@ -11,5 +11,5 @@
 pub mod driver;
 pub mod scanner;
 
-pub use driver::CDriver;
+pub use driver::{CDriver, CTarget, CompilerType, LinkResult};
 pub use scanner::HeaderScanner;

@@ -9,4 +9,4 @@
 
 pub mod driver;
 
-pub use driver::GoDriver;
+pub use driver::{GoDriver, GoTarget, GoModule};

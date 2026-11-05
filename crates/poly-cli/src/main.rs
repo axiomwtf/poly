@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use poly_config::parse_poly_ini;
 use poly_resolver::{DependencyResolver, LockFile};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing::{debug, info};
 use tracing_subscriber;
 
@@ -137,91 +137,20 @@ async fn cmd_build(_target: Option<String>, _release: bool) -> Result<()> {
     lockfile.write("poly.lock")?;
 
     // Create output directory
-    std::fs::create_dir_all("target")?;
+    let output_dir = PathBuf::from("target");
+    std::fs::create_dir_all(&output_dir)?;
 
     // Build each target
     for (target_id, target_config) in &config.targets {
         match target_config.language.as_str() {
             "rust" => {
-                let sources = expand_globs(&target_config.sources)?;
-                if sources.is_empty() {
-                    info!("No sources found for target {}", target_id);
-                    continue;
-                }
-
-                info!("Building Rust target: {}", target_id);
-
-                // For MVP, just use rustc directly on the first source
-                let driver = poly_rust::RustDriver::new()?;
-                let edition = target_config.edition.as_deref().or(config.project.edition.as_deref());
-                let crate_type = match target_config.type_.as_str() {
-                    "lib" => Some("lib"),
-                    "bin" => Some("bin"),
-                    "static-lib" => Some("staticlib"),
-                    "cdylib" => Some("cdylib"),
-                    _ => None,
-                };
-
-                for source in sources {
-                    let output = match crate_type {
-                        Some("bin") => PathBuf::from(format!("target/{}", target_id)),
-                        _ => PathBuf::from(format!("target/{}.rlib", target_id)),
-                    };
-
-                    driver.compile(
-                        &source,
-                        &output,
-                        edition,
-                        &target_config.features,
-                        &target_config.flags,
-                        crate_type,
-                    )?;
-                }
+                build_rust_target(target_id, target_config, &config, &output_dir)?;
             }
             "c" | "cpp" => {
-                let sources = expand_globs(&target_config.sources)?;
-                if sources.is_empty() {
-                    info!("No sources found for target {}", target_id);
-                    continue;
-                }
-
-                info!("Building C/C++ target: {}", target_id);
-
-                let driver = poly_c::CDriver::new()?;
-                let is_cpp = target_config.language == "cpp";
-
-                for source in sources {
-                    let ext = source.extension().and_then(|s| s.to_str()).unwrap_or("");
-                    let is_cpp_file = is_cpp || ext == "cpp" || ext == "cc" || ext == "cxx";
-                    let output = PathBuf::from(format!(
-                        "target/{}.{}",
-                        target_id,
-                        if is_cpp_file { "o" } else { "o" }
-                    ));
-
-                    driver.compile(&source, &output, &target_config.flags, is_cpp_file)?;
-                }
+                build_c_target(target_id, target_config, &config, &output_dir)?;
             }
             "go" => {
-                let sources = expand_globs(&target_config.sources)?;
-                if sources.is_empty() {
-                    info!("No sources found for target {}", target_id);
-                    continue;
-                }
-
-                info!("Building Go target: {}", target_id);
-
-                let driver = poly_go::GoDriver::new()?;
-                let output = PathBuf::from(format!("target/{}", target_id));
-                let cgo = target_config.cgo.unwrap_or(false);
-
-                driver.compile(
-                    &sources,
-                    &output,
-                    target_config.module.as_deref(),
-                    cgo,
-                    &target_config.flags,
-                )?;
+                build_go_target(target_id, target_config, &config, &output_dir)?;
             }
             _ => {
                 info!("Unknown language: {}", target_config.language);
@@ -230,6 +159,172 @@ async fn cmd_build(_target: Option<String>, _release: bool) -> Result<()> {
     }
 
     info!("Build completed successfully");
+
+    Ok(())
+}
+
+fn build_rust_target(
+    target_id: &str,
+    target_config: &poly_config::Target,
+    config: &poly_config::Config,
+    output_dir: &Path,
+) -> Result<()> {
+    info!("Building Rust target: {}", target_id);
+
+    let sources = expand_globs(&target_config.sources)?;
+    if sources.is_empty() {
+        info!("No sources found for target {}", target_id);
+        return Ok(());
+    }
+
+    let driver = poly_rust::RustDriver::new()?;
+
+    // Create Rust target
+    let rust_target = poly_rust::RustTarget {
+        name: target_id.replace('-', "_"),
+        crate_type: match target_config.type_.as_str() {
+            "lib" => "lib".to_string(),
+            "bin" => "bin".to_string(),
+            "static-lib" => "staticlib".to_string(),
+            "cdylib" => "cdylib".to_string(),
+            _ => "lib".to_string(),
+        },
+        edition: target_config.edition.clone()
+            .or(config.project.edition.clone())
+            .unwrap_or_else(|| "2024".to_string()),
+        features: target_config.features.clone(),
+        dependencies: Vec::new(), // TODO: Resolve from config
+        source: sources[0].clone(),
+        flags: target_config.flags.clone(),
+    };
+
+    // Determine output path
+    let output = match rust_target.crate_type.as_str() {
+        "bin" => output_dir.join(&rust_target.name),
+        _ => output_dir.join(format!("lib{}.rlib", rust_target.name)),
+    };
+
+    // Compile
+    driver.compile(
+        &sources[0],
+        &output,
+        &rust_target,
+        &[], // No dependencies for MVP
+        None, // No build script for MVP
+    )?;
+
+    Ok(())
+}
+
+fn build_c_target(
+    target_id: &str,
+    target_config: &poly_config::Target,
+    _config: &poly_config::Config,
+    output_dir: &Path,
+) -> Result<()> {
+    info!("Building C/C++ target: {}", target_id);
+
+    let sources = expand_globs(&target_config.sources)?;
+    if sources.is_empty() {
+        info!("No sources found for target {}", target_id);
+        return Ok(());
+    }
+
+    let driver = poly_c::CDriver::new()?;
+
+    // Create C target
+    let c_target = poly_c::CTarget {
+        name: target_id.to_string(),
+        language: target_config.language.clone(),
+        target_type: match target_config.type_.as_str() {
+            "bin" => "bin".to_string(),
+            "lib" => "lib".to_string(),
+            "static-lib" => "static-lib".to_string(),
+            "shared-lib" => "shared-lib".to_string(),
+            _ => "bin".to_string(),
+        },
+        sources: sources.clone(),
+        headers: Vec::new(), // TODO: Extract headers
+        include_dirs: Vec::new(), // TODO: Parse from config
+        library_dirs: Vec::new(), // TODO: Parse from config
+        libraries: Vec::new(), // TODO: Parse from config
+        flags: target_config.flags.clone(),
+        defines: std::collections::HashMap::new(), // TODO: Parse from config
+        dependencies: Vec::new(), // TODO: Resolve from config
+    };
+
+    // Create target-specific output directory
+    let target_output_dir = output_dir.join(target_id);
+    std::fs::create_dir_all(&target_output_dir)?;
+
+    // Compile all sources
+    let objects = driver.compile_target(&c_target, &target_output_dir)?;
+
+    // Determine output path
+    let output = match c_target.target_type.as_str() {
+        "bin" => output_dir.join(target_id),
+        "static-lib" => output_dir.join(format!("lib{}.a", target_id)),
+        "shared-lib" => output_dir.join(format!("lib{}.so", target_id)),
+        _ => output_dir.join(format!("lib{}.a", target_id)),
+    };
+
+    // Link
+    driver.link(&c_target, &objects, &output)?;
+
+    Ok(())
+}
+
+fn build_go_target(
+    target_id: &str,
+    target_config: &poly_config::Target,
+    config: &poly_config::Config,
+    output_dir: &Path,
+) -> Result<()> {
+    info!("Building Go target: {}", target_id);
+
+    let sources = expand_globs(&target_config.sources)?;
+    if sources.is_empty() {
+        info!("No sources found for target {}", target_id);
+        return Ok(());
+    }
+
+    let driver = poly_go::GoDriver::new()?;
+
+    // Create Go target
+    let go_target = poly_go::GoTarget {
+        name: target_id.to_string(),
+        module: target_config.module.clone()
+            .unwrap_or_else(|| format!("github.com/{}/{}", config.project.name, target_id)),
+        package: target_config.module.clone()
+            .unwrap_or_else(|| format!("github.com/{}/{}", config.project.name, target_id)),
+        sources: sources.clone(),
+        dependencies: Vec::new(), // TODO: Resolve from config
+        cgo: target_config.cgo.unwrap_or(false),
+        build_tags: Vec::new(), // TODO: Parse from config
+        flags: target_config.flags.clone(),
+        target_type: match target_config.type_.as_str() {
+            "bin" => "bin".to_string(),
+            "lib" => "lib".to_string(),
+            _ => "bin".to_string(),
+        },
+    };
+
+    // Create work directory
+    let work_dir = output_dir.join(target_id);
+    std::fs::create_dir_all(&work_dir)?;
+
+    // Determine output path
+    let output = match go_target.target_type.as_str() {
+        "bin" => output_dir.join(target_id),
+        _ => output_dir.join(format!("lib{}.a", target_id)),
+    };
+
+    // Compile
+    if go_target.cgo {
+        driver.compile_with_cgo(&go_target, &output, &work_dir, &[])?;
+    } else {
+        driver.compile(&go_target, &output, &work_dir)?;
+    }
 
     Ok(())
 }

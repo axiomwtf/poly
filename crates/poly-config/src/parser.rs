@@ -1,15 +1,7 @@
-//! poly.ini parser using nom
+//! poly.ini parser using simple line-based parsing
 
 use crate::model::*;
 use anyhow::{Context, Result};
-use nom::{
-    bytes::complete::{take_until, take_while1},
-    character::complete::{char, line_ending, multispace0, space0},
-    combinator::{map, opt},
-    multi::many0,
-    sequence::delimited,
-    IResult,
-};
 use std::collections::HashMap;
 use tracing::debug;
 
@@ -20,83 +12,52 @@ pub fn parse_poly_ini(path: &str) -> Result<Config> {
     let content = std::fs::read_to_string(path)
         .context(format!("Failed to read poly.ini from {}", path))?;
 
-    let (_, ini) = parse_ini(&content)
-        .map_err(|e| anyhow::anyhow!("Failed to parse poly.ini: {:?}", e))?;
-
-    // Build config from parsed INI
-    let config = build_config(ini)?;
+    let config = parse_ini_content(&content)?;
 
     debug!("Successfully parsed poly.ini");
     Ok(config)
 }
 
-#[derive(Debug, Clone)]
-struct IniSection {
-    name: String,
-    properties: HashMap<String, String>,
+fn parse_ini_content(content: &str) -> Result<Config> {
+    let mut sections: Vec<(String, HashMap<String, String>)> = Vec::new();
+    let mut current_section: Option<String> = None;
+    let mut current_props: HashMap<String, String> = HashMap::new();
+
+    for line in content.lines() {
+        let line = line.trim();
+
+        // Skip empty lines and comments
+        if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+            continue;
+        }
+
+        // Check if it's a section header
+        if line.starts_with('[') && line.ends_with(']') {
+            // Save previous section
+            if let Some(name) = current_section.take() {
+                sections.push((name, std::mem::take(&mut current_props)));
+            }
+            current_section = Some(line[1..line.len()-1].to_string());
+            continue;
+        }
+
+        // Parse key=value
+        if let Some((key, value)) = line.split_once('=') {
+            let key = key.trim().to_string();
+            let value = value.trim().to_string();
+            current_props.insert(key, value);
+        }
+    }
+
+    // Save last section
+    if let Some(name) = current_section.take() {
+        sections.push((name, current_props));
+    }
+
+    build_config(sections)
 }
 
-#[derive(Debug, Clone)]
-struct Ini {
-    sections: Vec<IniSection>,
-}
-
-fn parse_ini(input: &str) -> IResult<&str, Ini> {
-    let (input, sections) = many0(parse_section)(input)?;
-    Ok((input, Ini { sections }))
-}
-
-fn parse_section(input: &str) -> IResult<&str, IniSection> {
-    let (input, _) = multispace0(input)?;
-    let (input, name) = parse_section_name(input)?;
-    let (input, _) = multispace0(input)?;
-    let (input, properties) = many0(parse_property)(input)?;
-    let (input, _) = multispace0(input)?;
-
-    Ok((
-        input,
-        IniSection {
-            name,
-            properties: properties.into_iter().collect(),
-        },
-    ))
-}
-
-fn parse_section_name(input: &str) -> IResult<&str, String> {
-    delimited(
-        char('['),
-        map(
-            take_while1(|c: char| c.is_alphanumeric() || c == '.' || c == '_'),
-            |s: &str| s.to_string(),
-        ),
-        char(']'),
-    )(input)
-}
-
-fn parse_property(input: &str) -> IResult<&str, (String, String)> {
-    let (input, key) = parse_key(input)?;
-    let (input, _) = space0(input)?;
-    let (input, _) = char('=')(input)?;
-    let (input, _) = space0(input)?;
-    let (input, value) = parse_value(input)?;
-    let (input, _) = opt(line_ending)(input)?;
-
-    Ok((input, (key, value)))
-}
-
-fn parse_key(input: &str) -> IResult<&str, String> {
-    map(
-        take_while1(|c: char| c.is_alphanumeric() || c == '_'),
-        |s: &str| s.to_string(),
-    )(input)
-}
-
-fn parse_value(input: &str) -> IResult<&str, String> {
-    let (input, value) = take_until("\n")(input)?;
-    Ok((input, value.trim().to_string()))
-}
-
-fn build_config(ini: Ini) -> Result<Config> {
+fn build_config(sections: Vec<(String, HashMap<String, String>)>) -> Result<Config> {
     let mut project = None;
     let mut workspace = None;
     let mut targets = HashMap::new();
@@ -116,106 +77,106 @@ fn build_config(ini: Ini) -> Result<Config> {
     let mut hooks = None;
     let mut secrets = None;
 
-    for section in &ini.sections {
-        match section.name.as_str() {
+    for (section_name, props) in sections {
+        match section_name.as_str() {
             "project" => {
                 project = Some(Project {
-                    name: section.properties.get("name").unwrap_or(&String::new()).clone(),
-                    version: section.properties.get("version").unwrap_or(&String::new()).clone(),
-                    edition: section.properties.get("edition").cloned(),
+                    name: props.get("name").unwrap_or(&String::new()).clone(),
+                    version: props.get("version").unwrap_or(&String::new()).clone(),
+                    edition: props.get("edition").cloned(),
                 });
             }
             "workspace" => {
                 workspace = Some(Workspace {
-                    members: parse_array(section.properties.get("members")),
-                    shared_deps: parse_array(section.properties.get("sharedDeps")),
+                    members: parse_array(props.get("members")),
+                    shared_deps: parse_array(props.get("sharedDeps")),
                 });
             }
             name if name.starts_with("target.") => {
                 let target_name = name.strip_prefix("target.").unwrap();
                 let target = Target {
-                    language: section.properties.get("language").unwrap_or(&String::new()).clone(),
-                    type_: section.properties.get("type").unwrap_or(&String::new()).clone(),
-                    sources: parse_array(section.properties.get("sources")),
-                    compiler: section.properties.get("compiler").cloned(),
-                    flags: parse_array(section.properties.get("flags")),
-                    edition: section.properties.get("edition").cloned(),
-                    features: parse_array(section.properties.get("features")),
-                    module: section.properties.get("module").cloned(),
-                    cgo: section.properties.get("cgo").and_then(|v| v.parse().ok()),
+                    language: props.get("language").unwrap_or(&String::new()).clone(),
+                    type_: props.get("type").unwrap_or(&String::new()).clone(),
+                    sources: parse_array(props.get("sources")),
+                    compiler: props.get("compiler").cloned(),
+                    flags: parse_array(props.get("flags")),
+                    edition: props.get("edition").cloned(),
+                    features: parse_array(props.get("features")),
+                    module: props.get("module").cloned(),
+                    cgo: props.get("cgo").and_then(|v| v.parse().ok()),
                 };
                 targets.insert(target_name.to_string(), target);
             }
             "dependencies.rust" => {
-                rust_deps = section.properties.clone();
+                rust_deps = props.clone();
             }
             "dependencies.c" => {
-                c_deps = section.properties.clone();
+                c_deps = props.clone();
             }
             "dependencies.go" => {
-                go_deps = section.properties.clone();
+                go_deps = props.clone();
             }
             "build.default" => {
                 default_profile = Some(BuildProfile {
-                    targets: parse_array(section.properties.get("targets")),
-                    rust_flags: parse_array(section.properties.get("rust.flags")),
-                    c_flags: parse_array(section.properties.get("c.flags")),
-                    go_flags: parse_array(section.properties.get("go.flags")),
+                    targets: parse_array(props.get("targets")),
+                    rust_flags: parse_array(props.get("rust.flags")),
+                    c_flags: parse_array(props.get("c.flags")),
+                    go_flags: parse_array(props.get("go.flags")),
                 });
             }
             name if name.starts_with("build.profiles.") => {
                 let profile_name = name.strip_prefix("build.profiles.").unwrap();
                 let profile = BuildProfile {
-                    targets: parse_array(section.properties.get("targets")),
-                    rust_flags: parse_array(section.properties.get("rust.flags")),
-                    c_flags: parse_array(section.properties.get("c.flags")),
-                    go_flags: parse_array(section.properties.get("go.flags")),
+                    targets: parse_array(props.get("targets")),
+                    rust_flags: parse_array(props.get("rust.flags")),
+                    c_flags: parse_array(props.get("c.flags")),
+                    go_flags: parse_array(props.get("go.flags")),
                 };
                 build_profiles.insert(profile_name.to_string(), profile);
             }
             "publish" => {
                 publish = Some(PublishConfig {
-                    targets: parse_array(section.properties.get("targets")),
-                    platforms: parse_array(section.properties.get("platforms")),
-                    include_docs: section.properties.get("includeDocs")
+                    targets: parse_array(props.get("targets")),
+                    platforms: parse_array(props.get("platforms")),
+                    include_docs: props.get("includeDocs")
                         .and_then(|v| v.parse().ok())
                         .unwrap_or(false),
                 });
             }
             "vfsx" => {
                 vfsx = Some(VfsxConfig {
-                    sign: section.properties.get("sign")
+                    sign: props.get("sign")
                         .and_then(|v| v.parse().ok())
                         .unwrap_or(false),
-                    keyfile: section.properties.get("keyfile").unwrap_or(&String::new()).clone(),
-                    verify: section.properties.get("verify")
+                    keyfile: props.get("keyfile").unwrap_or(&String::new()).clone(),
+                    verify: props.get("verify")
                         .and_then(|v| v.parse().ok())
                         .unwrap_or(false),
-                    trust_store: section.properties.get("trustStore").unwrap_or(&String::new()).clone(),
+                    trust_store: props.get("trustStore").unwrap_or(&String::new()).clone(),
                 });
             }
             "lint" => {
                 lint = Some(LintConfig {
-                    rust: section.properties.get("rust").unwrap_or(&String::new()).clone(),
-                    c: section.properties.get("c").unwrap_or(&String::new()).clone(),
-                    go: section.properties.get("go").unwrap_or(&String::new()).clone(),
-                    run_on_build: section.properties.get("runOnBuild")
+                    rust: props.get("rust").unwrap_or(&String::new()).clone(),
+                    c: props.get("c").unwrap_or(&String::new()).clone(),
+                    go: props.get("go").unwrap_or(&String::new()).clone(),
+                    run_on_build: props.get("runOnBuild")
                         .and_then(|v| v.parse().ok())
                         .unwrap_or(false),
                 });
             }
             "format" => {
                 format = Some(FormatConfig {
-                    rust: section.properties.get("rust").unwrap_or(&String::new()).clone(),
-                    c: section.properties.get("c").unwrap_or(&String::new()).clone(),
-                    go: section.properties.get("go").unwrap_or(&String::new()).clone(),
+                    rust: props.get("rust").unwrap_or(&String::new()).clone(),
+                    c: props.get("c").unwrap_or(&String::new()).clone(),
+                    go: props.get("go").unwrap_or(&String::new()).clone(),
                 });
             }
             "cache" => {
                 cache = Some(CacheConfig {
-                    local: section.properties.get("local").unwrap_or(&String::new()).clone(),
-                    remote: section.properties.get("remote").cloned(),
-                    enabled: section.properties.get("enabled")
+                    local: props.get("local").unwrap_or(&String::new()).clone(),
+                    remote: props.get("remote").cloned(),
+                    enabled: props.get("enabled")
                         .and_then(|v| v.parse().ok())
                         .unwrap_or(false),
                 });
@@ -223,17 +184,17 @@ fn build_config(ini: Ini) -> Result<Config> {
             "toolchain" => {
                 toolchain = Some(ToolchainConfig {
                     rust: ToolchainSpec {
-                        version: section.properties.get("rust.version").unwrap_or(&String::new()).clone(),
-                        channel: section.properties.get("rust.channel").cloned(),
+                        version: props.get("rust.version").unwrap_or(&String::new()).clone(),
+                        channel: props.get("rust.channel").cloned(),
                         compiler: None,
                     },
                     c: ToolchainSpec {
-                        version: section.properties.get("c.version").unwrap_or(&String::new()).clone(),
+                        version: props.get("c.version").unwrap_or(&String::new()).clone(),
                         channel: None,
-                        compiler: section.properties.get("c.compiler").cloned(),
+                        compiler: props.get("c.compiler").cloned(),
                     },
                     go: ToolchainSpec {
-                        version: section.properties.get("go.version").unwrap_or(&String::new()).clone(),
+                        version: props.get("go.version").unwrap_or(&String::new()).clone(),
                         channel: None,
                         compiler: None,
                     },
@@ -241,31 +202,31 @@ fn build_config(ini: Ini) -> Result<Config> {
             }
             "cross" => {
                 cross = Some(CrossConfig {
-                    targets: parse_array(section.properties.get("targets")),
-                    sysroot: section.properties.get("sysroot").unwrap_or(&String::new()).clone(),
+                    targets: parse_array(props.get("targets")),
+                    sysroot: props.get("sysroot").unwrap_or(&String::new()).clone(),
                 });
             }
             "plugins" => {
-                plugins = Some(section.properties.clone());
+                plugins = Some(props.clone());
             }
             "hooks" => {
                 hooks = Some(HooksConfig {
-                    pre_build: section.properties.get("preBuild").map(|cmd| Hook {
+                    pre_build: props.get("preBuild").map(|cmd| Hook {
                         command: cmd.clone(),
                     }),
-                    post_build: section.properties.get("postBuild").map(|cmd| Hook {
+                    post_build: props.get("postBuild").map(|cmd| Hook {
                         command: cmd.clone(),
                     }),
-                    pre_test: section.properties.get("preTest").map(|cmd| Hook {
+                    pre_test: props.get("preTest").map(|cmd| Hook {
                         command: cmd.clone(),
                     }),
-                    post_test: section.properties.get("postTest").map(|cmd| Hook {
+                    post_test: props.get("postTest").map(|cmd| Hook {
                         command: cmd.clone(),
                     }),
                 });
             }
             "secrets" => {
-                secrets = Some(section.properties.clone());
+                secrets = Some(props.clone());
             }
             _ => {}
         }
@@ -291,9 +252,6 @@ fn build_config(ini: Ini) -> Result<Config> {
         go: go_deps,
     };
 
-    // Validate camelCase keys
-    validate_camel_case(&ini)?;
-
     Ok(Config {
         project,
         workspace,
@@ -318,65 +276,4 @@ fn parse_array(value: Option<&String>) -> Vec<String> {
         Some(v) => v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect(),
         None => Vec::new(),
     }
-}
-
-/// Validate that all keys are camelCase
-fn validate_camel_case(ini: &Ini) -> Result<()> {
-    for section in &ini.sections {
-        for key in section.properties.keys() {
-            if !is_camel_case(key) {
-                let expected = to_camel_case(key);
-                tracing::warn!(
-                    "poly.ini: key '{}' in section '{}' is not camelCase, use '{}'",
-                    key,
-                    section.name,
-                    expected
-                );
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Check if a string is camelCase
-fn is_camel_case(s: &str) -> bool {
-    if s.is_empty() {
-        return false;
-    }
-
-    let chars: Vec<char> = s.chars().collect();
-
-    // First character must be lowercase
-    if !chars[0].is_lowercase() {
-        return false;
-    }
-
-    // No hyphens, underscores, or dots allowed in keys
-    for c in chars {
-        if c == '-' || c == '_' || c == '.' {
-            return false;
-        }
-    }
-
-    true
-}
-
-/// Convert a string to camelCase
-fn to_camel_case(s: &str) -> String {
-    let parts: Vec<&str> = s.split(['-', '_', '.']).collect();
-    let mut result = String::new();
-
-    for (i, part) in parts.iter().enumerate() {
-        if i == 0 {
-            result.push_str(&part.to_lowercase());
-        } else {
-            let mut chars = part.chars();
-            if let Some(first) = chars.next() {
-                result.push(first.to_uppercase().next().unwrap());
-                result.extend(chars);
-            }
-        }
-    }
-
-    result
 }

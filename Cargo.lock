@@ -512,6 +512,7 @@ dependencies = [
  "poly-config",
  "poly-core",
  "poly-go",
+ "poly-linker",
  "poly-resolver",
  "poly-rust",
  "tokio",
@@ -552,6 +553,19 @@ dependencies = [
  "serde",
  "thiserror",
  "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "poly-linker"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "poly-c",
+ "poly-go",
+ "poly-rust",
+ "serde",
+ "thiserror",
  "tracing",
 ]
 

@@ -16,6 +16,7 @@ poly-resolver = { path = "../poly-resolver" }
 poly-rust = { path = "../poly-rust" }
 poly-c = { path = "../poly-c" }
 poly-go = { path = "../poly-go" }
+poly-linker = { path = "../poly-linker" }
 clap = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }

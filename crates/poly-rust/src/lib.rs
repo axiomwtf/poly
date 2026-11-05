@@ -11,5 +11,5 @@
 pub mod driver;
 pub mod graph;
 
-pub use driver::RustDriver;
+pub use driver::{RustDriver, RustTarget, BuildScript, BuildScriptOutput};
 pub use graph::CrateGraph;
