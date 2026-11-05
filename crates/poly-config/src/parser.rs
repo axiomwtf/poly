@@ -64,6 +64,7 @@ fn build_config(sections: Vec<(String, HashMap<String, String>)>) -> Result<Conf
     let mut rust_deps = HashMap::new();
     let mut c_deps = HashMap::new();
     let mut go_deps = HashMap::new();
+    let mut workspace_deps: HashMap<String, HashMap<String, String>> = HashMap::new();
     let mut build_profiles = HashMap::new();
     let mut default_profile = None;
     let mut publish = None;
@@ -84,6 +85,16 @@ fn build_config(sections: Vec<(String, HashMap<String, String>)>) -> Result<Conf
                     name: props.get("name").unwrap_or(&String::new()).clone(),
                     version: props.get("version").unwrap_or(&String::new()).clone(),
                     edition: props.get("edition").cloned(),
+                    description: props.get("description").cloned(),
+                    license: props.get("license").cloned(),
+                    license_file: props.get("licenseFile").cloned(),
+                    homepage: props.get("homepage").cloned(),
+                    documentation: props.get("documentation").cloned(),
+                    repository: props.get("repository").cloned(),
+                    readme: props.get("readme").cloned(),
+                    keywords: parse_array(props.get("keywords")),
+                    categories: parse_array(props.get("categories")),
+                    authors: parse_array(props.get("authors")),
                 });
             }
             "workspace" => {
@@ -116,6 +127,10 @@ fn build_config(sections: Vec<(String, HashMap<String, String>)>) -> Result<Conf
             "dependencies.go" => {
                 go_deps = props.clone();
             }
+            name if name.starts_with("dependencies.workspace.") => {
+                let crate_name = name.strip_prefix("dependencies.workspace.").unwrap();
+                workspace_deps.insert(crate_name.to_string(), props.clone());
+            }
             "build.default" => {
                 default_profile = Some(BuildProfile {
                     targets: parse_array(props.get("targets")),
@@ -141,6 +156,9 @@ fn build_config(sections: Vec<(String, HashMap<String, String>)>) -> Result<Conf
                     include_docs: props.get("includeDocs")
                         .and_then(|v| v.parse().ok())
                         .unwrap_or(false),
+                    registry: props.get("registry").cloned(),
+                    token_env: props.get("tokenEnv").cloned(),
+                    crate_name: props.get("crateName").cloned(),
                 });
             }
             "vfsx" => {
@@ -250,6 +268,7 @@ fn build_config(sections: Vec<(String, HashMap<String, String>)>) -> Result<Conf
         rust: rust_deps,
         c: c_deps,
         go: go_deps,
+        workspace: workspace_deps,
     };
 
     Ok(Config {

@@ -1,7 +1,14 @@
 //! Package installer for installing Poly packages
+//!
+//! Layout under `install_dir`:
+//!   bin/                  <- executables for the current platform
+//!   packages/<name>/      <- extracted package contents
+//!   manifest.json         <- package name -> installed files
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use poly_vfsx::Vfsx;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info};
@@ -10,8 +17,17 @@ use tracing::{debug, info};
 #[derive(Debug, Clone)]
 pub struct InstallConfig {
     pub install_dir: PathBuf,
+    /// Where executables are placed. Defaults to `<install_dir>/bin`.
+    pub bin_dir: Option<PathBuf>,
     pub verify_signatures: bool,
     pub public_key_path: Option<PathBuf>,
+}
+
+/// Per-package install record persisted in manifest.json
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct PackageRecord {
+    version: String,
+    files: Vec<PathBuf>,
 }
 
 /// Package installer
@@ -29,21 +45,23 @@ impl Installer {
     pub async fn install(&self, archive_path: &Path) -> Result<()> {
         info!("Installing package: {}", archive_path.display());
 
-        // Verify package if configured
         if self.config.verify_signatures {
             if let Some(key_path) = &self.config.public_key_path {
-                self.verify_package(archive_path, key_path).await?;
+                if key_path.exists() {
+                    self.verify_package(archive_path, key_path).await?;
+                } else {
+                    debug!(
+                        "No public key at {}; skipping signature verification",
+                        key_path.display()
+                    );
+                }
             }
         }
 
-        // Extract package using external vfsx command
         let temp_dir = self.extract_package(archive_path).await?;
-
-        // Install package
-        self.install_package(&temp_dir).await?;
-
-        // Cleanup
-        fs::remove_dir_all(&temp_dir)?;
+        let result = self.install_package(&temp_dir).await;
+        let _ = fs::remove_dir_all(&temp_dir);
+        result?;
 
         info!("Package installed successfully");
         Ok(())
@@ -54,7 +72,6 @@ impl Installer {
         debug!("Verifying package signatures");
 
         let vfsx = Vfsx::new(false);
-        
         if !vfsx.verify(archive_path, key_path)? {
             anyhow::bail!("Package signature verification failed");
         }
@@ -69,10 +86,9 @@ impl Installer {
 
         let temp_dir = std::env::temp_dir()
             .join(format!("poly-install-{}", std::process::id()));
-        
+
         fs::create_dir_all(&temp_dir)?;
 
-        // Extract archive using external vfsx command
         let vfsx = Vfsx::new(false);
         vfsx.extract(archive_path, &temp_dir)?;
 
@@ -83,138 +99,119 @@ impl Installer {
     async fn install_package(&self, package_dir: &Path) -> Result<()> {
         debug!("Installing package from: {}", package_dir.display());
 
-        // Find the package directory (should contain bin/, src/, etc.)
         let package_root = self.find_package_root(package_dir)?;
+        let metadata = self.read_metadata(&package_root)?;
+        let name = metadata
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let version = metadata
+            .get("version")
+            .and_then(|v| v.as_str())
+            .unwrap_or("0.0.0")
+            .to_string();
 
-        // Install executables
-        self.install_executables(&package_root)?;
+        // Keep the extracted package under packages/<name>/
+        let pkg_dir = self.config.install_dir.join("packages").join(&name);
+        if pkg_dir.exists() {
+            fs::remove_dir_all(&pkg_dir)?;
+        }
+        copy_dir_all(&package_root, &pkg_dir)?;
 
-        // Install source files if present
-        self.install_sources(&package_root)?;
+        // Install current-platform executables into bin/
+        let mut installed_files = Vec::new();
+        let platform = self.get_current_platform()?;
+        let platform_bin = package_root.join("bin").join(&platform);
+        if platform_bin.is_dir() {
+            let install_bin = self
+                .config
+                .bin_dir
+                .clone()
+                .unwrap_or_else(|| self.config.install_dir.join("bin"));
+            fs::create_dir_all(&install_bin)?;
+            for entry in fs::read_dir(&platform_bin)? {
+                let entry = entry?;
+                let path = entry.path();
+                if !path.is_file() {
+                    continue;
+                }
+                let file_name = entry.file_name();
+                let dest = install_bin.join(&file_name);
+                fs::copy(&path, &dest)?;
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let mut perms = fs::metadata(&dest)?.permissions();
+                    perms.set_mode(0o755);
+                    fs::set_permissions(&dest, perms)?;
+                }
+                installed_files.push(dest.clone());
+                info!("Installed {}", dest.display());
+            }
+        } else {
+            info!("No binaries for platform {} in package", platform);
+        }
 
-        // Install metadata
-        self.install_metadata(&package_root)?;
+        // Record in manifest
+        let mut manifest = self.load_manifest()?;
+        manifest.insert(
+            name.clone(),
+            PackageRecord {
+                version,
+                files: installed_files,
+            },
+        );
+        self.save_manifest(&manifest)?;
 
+        Ok(())
+    }
+
+    fn read_metadata(&self, package_root: &Path) -> Result<serde_json::Value> {
+        let path = package_root.join("package.json");
+        if !path.exists() {
+            return Ok(serde_json::json!({}));
+        }
+        let contents = fs::read_to_string(&path)?;
+        Ok(serde_json::from_str(&contents)?)
+    }
+
+    fn manifest_path(&self) -> PathBuf {
+        self.config.install_dir.join("manifest.json")
+    }
+
+    fn load_manifest(&self) -> Result<HashMap<String, PackageRecord>> {
+        let path = self.manifest_path();
+        if !path.exists() {
+            return Ok(HashMap::new());
+        }
+        let contents = fs::read_to_string(&path)?;
+        Ok(serde_json::from_str(&contents)?)
+    }
+
+    fn save_manifest(&self, manifest: &HashMap<String, PackageRecord>) -> Result<()> {
+        fs::create_dir_all(&self.config.install_dir)?;
+        let json = serde_json::to_string_pretty(manifest)?;
+        fs::write(self.manifest_path(), json)?;
         Ok(())
     }
 
     fn find_package_root(&self, extract_dir: &Path) -> Result<PathBuf> {
-        // Look for the package directory (should contain package.json)
         for entry in fs::read_dir(extract_dir)? {
             let entry = entry?;
             let path = entry.path();
-            
             if path.is_dir() && path.join("package.json").exists() {
                 return Ok(path);
             }
         }
-
-        // If no subdirectory found, assume extract_dir is the package root
+        // Also accept a root-level package.json
+        if extract_dir.join("package.json").exists() {
+            return Ok(extract_dir.to_path_buf());
+        }
         Ok(extract_dir.to_path_buf())
     }
 
-    fn install_executables(&self, package_root: &Path) -> Result<()> {
-        let bin_dir = package_root.join("bin");
-        
-        if !bin_dir.exists() {
-            debug!("No bin directory found");
-            return Ok(());
-        }
-
-        // Determine current platform
-        let platform = self.get_current_platform()?;
-        let platform_bin_dir = bin_dir.join(&platform);
-
-        if !platform_bin_dir.exists() {
-            debug!("No binaries for platform: {}", platform);
-            return Ok(());
-        }
-
-        // Install executables to install_dir/bin
-        let install_bin_dir = self.config.install_dir.join("bin");
-        fs::create_dir_all(&install_bin_dir)?;
-
-        for entry in fs::read_dir(&platform_bin_dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            
-            if path.is_file() {
-                let file_name = entry.file_name();
-                let dest_path = install_bin_dir.join(&file_name);
-                
-                fs::copy(&path, &dest_path)?;
-                
-                // Make executable
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    let mut perms = fs::metadata(&dest_path)?.permissions();
-                    perms.set_mode(0o755);
-                    fs::set_permissions(&dest_path, perms)?;
-                }
-                
-                info!("Installed executable: {}", file_name.to_string_lossy());
-            }
-        }
-
-        Ok(())
-    }
-
-    fn install_sources(&self, package_root: &Path) -> Result<()> {
-        let src_dir = package_root.join("src");
-        
-        if !src_dir.exists() {
-            debug!("No src directory found");
-            return Ok(());
-        }
-
-        let install_src_dir = self.config.install_dir.join("src");
-        fs::create_dir_all(&install_src_dir)?;
-
-        // Copy source files
-        for entry in walkdir::WalkDir::new(&src_dir) {
-            let entry = entry?;
-            let path = entry.path();
-            
-            if path.is_file() {
-                let relative_path = path.strip_prefix(&src_dir)?;
-                let dest_path = install_src_dir.join(relative_path);
-                
-                if let Some(parent) = dest_path.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-                
-                fs::copy(path, dest_path)?;
-            }
-        }
-
-        debug!("Installed source files");
-        Ok(())
-    }
-
-    fn install_metadata(&self, package_root: &Path) -> Result<()> {
-        // Install metadata files
-        let metadata_dir = self.config.install_dir.join("metadata");
-        fs::create_dir_all(&metadata_dir)?;
-
-        // Copy package.json
-        let package_json_path = package_root.join("package.json");
-        if package_json_path.exists() {
-            fs::copy(&package_json_path, metadata_dir.join("package.json"))?;
-        }
-
-        // Copy lock file
-        let lock_path = package_root.join("poly.lock");
-        if lock_path.exists() {
-            fs::copy(&lock_path, metadata_dir.join("poly.lock"))?;
-        }
-
-        debug!("Installed metadata");
-        Ok(())
-    }
-
     fn get_current_platform(&self) -> Result<String> {
-        // Determine current platform
         let arch = std::env::consts::ARCH;
         let os = std::env::consts::OS;
 
@@ -225,7 +222,7 @@ impl Installer {
             ("aarch64", "macos") => "aarch64-macos",
             ("x86_64", "windows") => "x86_64-windows",
             ("aarch64", "windows") => "aarch64-windows",
-            _ => return Err(anyhow::anyhow!("Unsupported platform: {}-{}", arch, os)),
+            _ => anyhow::bail!("Unsupported platform: {}-{}", arch, os),
         };
 
         Ok(platform.to_string())
@@ -235,50 +232,50 @@ impl Installer {
     pub async fn uninstall(&self, package_name: &str) -> Result<()> {
         info!("Uninstalling package: {}", package_name);
 
-        // Remove executables
-        self.remove_executables(package_name)?;
+        let mut manifest = self.load_manifest()?;
+        let record = manifest
+            .remove(package_name)
+            .with_context(|| format!("Package not installed: {}", package_name))?;
 
-        // Remove source files
-        self.remove_sources(package_name)?;
+        // Remove recorded files (absolute paths used as-is)
+        for path in &record.files {
+            if path.exists() {
+                fs::remove_file(path)?;
+            }
+        }
 
-        // Remove metadata
-        self.remove_metadata(package_name)?;
+        // Remove extracted package dir
+        let pkg_dir = self.config.install_dir.join("packages").join(package_name);
+        if pkg_dir.exists() {
+            fs::remove_dir_all(&pkg_dir)?;
+        }
 
+        self.save_manifest(&manifest)?;
         info!("Package uninstalled successfully");
         Ok(())
     }
+}
 
-    fn remove_executables(&self, _package_name: &str) -> Result<()> {
-        // TODO: Implement proper package tracking
-        // For now, just remove the bin directory
-        let bin_dir = self.config.install_dir.join("bin");
-        if bin_dir.exists() {
-            fs::remove_dir_all(&bin_dir)?;
+fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let path = entry.path();
+        let dest = dst.join(entry.file_name());
+        if path.is_dir() {
+            copy_dir_all(&path, &dest)?;
+        } else {
+            fs::copy(&path, &dest)?;
         }
-        Ok(())
     }
-
-    fn remove_sources(&self, _package_name: &str) -> Result<()> {
-        let src_dir = self.config.install_dir.join("src");
-        if src_dir.exists() {
-            fs::remove_dir_all(&src_dir)?;
-        }
-        Ok(())
-    }
-
-    fn remove_metadata(&self, _package_name: &str) -> Result<()> {
-        let metadata_dir = self.config.install_dir.join("metadata");
-        if metadata_dir.exists() {
-            fs::remove_dir_all(&metadata_dir)?;
-        }
-        Ok(())
-    }
+    Ok(())
 }
 
 impl Default for Installer {
     fn default() -> Self {
         Self::new(InstallConfig {
             install_dir: PathBuf::from(".poly"),
+            bin_dir: None,
             verify_signatures: true,
             public_key_path: None,
         })

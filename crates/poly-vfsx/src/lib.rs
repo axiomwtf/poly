@@ -119,15 +119,17 @@ impl Vfsx {
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     }
 
-    /// Generate a new keypair
-    pub fn key_gen(&self, output_path: &Path) -> Result<()> {
-        debug!("Generating VFSX keypair: {}", output_path.display());
+    /// Generate a new keypair in the vfsx config directory
+    /// (`~/.config/vfsx/keys/identity.{priv,pub}`). No-op if keys exist
+    /// unless `force` is set.
+    pub fn key_gen(&self, force: bool) -> Result<()> {
+        debug!("Generating VFSX keypair (force={})", force);
 
         let mut cmd = Command::new("vfsx");
-        cmd.arg("key")
-            .arg("gen")
-            .arg("-o")
-            .arg(output_path);
+        cmd.arg("key").arg("gen");
+        if force {
+            cmd.arg("--force");
+        }
 
         if self.verbose {
             cmd.arg("-v");
@@ -140,18 +142,18 @@ impl Vfsx {
             anyhow::bail!("vfsx key gen failed: {}", stderr);
         }
 
-        info!("VFSX keypair generated: {}", output_path.display());
+        info!("VFSX keypair ready");
         Ok(())
     }
 
-    /// Export public key as a VFSX archive
-    pub fn key_export(&self, private_key_path: &Path, public_key_path: &Path) -> Result<()> {
-        debug!("Exporting public key: {} -> {}", private_key_path.display(), public_key_path.display());
+    /// Export the auto-loaded identity's public key as a VFSX key archive
+    /// (usable with `vfsx verify --key`).
+    pub fn key_export(&self, public_key_path: &Path) -> Result<()> {
+        debug!("Exporting public key: {}", public_key_path.display());
 
         let mut cmd = Command::new("vfsx");
         cmd.arg("key")
             .arg("export")
-            .arg(private_key_path)
             .arg("-o")
             .arg(public_key_path);
 

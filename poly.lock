@@ -1,104 +1,844 @@
 [lock]
 version = 1
-generated = 2026-11-05T17:41:21.191821831+00:00
+generated = 2026-11-05T21:29:08.244672829+00:00
 
-[dependency.rust.tracing]
-version = 0.1
-checksum = sha256:0000000000000000000000000000000000000000000000000000000000000000
+[dependency.rust.multiversion_no_op]
+version = 1.0.0
+checksum = cached
 source = https://crates.io
 
-[dependency.rust.xz2]
-version = 0.1
-checksum = sha256:0000000000000000000000000000000000000000000000000000000000000000
+[dependency.rust.rustversion]
+version = 1.0.23
+checksum = cached
 source = https://crates.io
 
-[dependency.rust.anyhow]
-version = 1.0
-checksum = sha256:0000000000000000000000000000000000000000000000000000000000000000
-source = https://crates.io
-
-[dependency.rust.walkdir]
-version = 2.5
-checksum = sha256:0000000000000000000000000000000000000000000000000000000000000000
-source = https://crates.io
-
-[dependency.rust.reqwest]
-version = 0.12
-checksum = sha256:0000000000000000000000000000000000000000000000000000000000000000
-source = https://crates.io
-
-[dependency.rust.dirs]
-version = 5.0
-checksum = sha256:0000000000000000000000000000000000000000000000000000000000000000
-source = https://crates.io
-
-[dependency.rust.ed25519-dalek]
-version = 2.0
-checksum = sha256:0000000000000000000000000000000000000000000000000000000000000000
+[dependency.rust.find-msvc-tools]
+version = 0.1.15
+checksum = cached
 source = https://crates.io
 
 [dependency.rust.clap]
-version = 4.5
-checksum = sha256:0000000000000000000000000000000000000000000000000000000000000000
+version = 4.6.7
+checksum = cached
 source = https://crates.io
 
-[dependency.rust.chrono]
-version = 0.4
-checksum = sha256:0000000000000000000000000000000000000000000000000000000000000000
+[dependency.rust.utf8_iter]
+version = 1.1.0
+checksum = cached
 source = https://crates.io
 
-[dependency.rust.serde_json]
-version = 1.0
-checksum = sha256:0000000000000000000000000000000000000000000000000000000000000000
+[dependency.rust.displaydoc]
+version = 0.2.7
+checksum = cached
 source = https://crates.io
 
-[dependency.rust.hex]
-version = 0.4
-checksum = sha256:0000000000000000000000000000000000000000000000000000000000000000
+[dependency.rust.typenum]
+version = 1.20.1
+checksum = cached
 source = https://crates.io
 
-[dependency.rust.rand]
-version = 0.8
-checksum = sha256:0000000000000000000000000000000000000000000000000000000000000000
+[dependency.rust.tinystr]
+version = 0.8.5
+checksum = cached
 source = https://crates.io
 
-[dependency.rust.rand_core]
-version = 0.6
-checksum = sha256:0000000000000000000000000000000000000000000000000000000000000000
+[dependency.rust.hyper-util]
+version = 0.1.21
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.bitflags]
+version = 2.13.2
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.parking_lot]
+version = 0.12.5
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.futures-util]
+version = 0.3.34
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.utf_types]
+version = 1.0.0
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.synstructure]
+version = 0.14.0
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.lock_api]
+version = 0.4.14
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.serde_core]
+version = 1.0.229
+checksum = cached
 source = https://crates.io
 
 [dependency.rust.serde]
-version = 1.0
-checksum = sha256:0000000000000000000000000000000000000000000000000000000000000000
+version = 1.0.229
+checksum = cached
 source = https://crates.io
 
-[dependency.rust.tracing-subscriber]
-version = 0.3
-checksum = sha256:0000000000000000000000000000000000000000000000000000000000000000
+[dependency.rust.http-body-util]
+version = 0.1.5
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.autocfg]
+version = 1.5.1
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.ryu]
+version = 1.0.23
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.vcpkg]
+version = 0.2.15
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.openssl-probe]
+version = 0.2.2
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.cpufeatures]
+version = 0.2.17
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.fnv]
+version = 1.0.7
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.iana-time-zone]
+version = 0.1.65
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.want]
+version = 0.3.2
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.tracing-attributes]
+version = 0.1.31
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.option-ext]
+version = 0.2.0
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.tower-service]
+version = 0.3.3
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.url]
+version = 2.5.8
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.pin-project-lite]
+version = 0.2.17
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.adler2]
+version = 2.0.1
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.thread_local]
+version = 1.1.10
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.writeable]
+version = 0.6.4
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.colorchoice]
+version = 1.0.5
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.futures-channel]
+version = 0.3.34
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.digest]
+version = 0.10.7
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.nu-ansi-term]
+version = 0.50.3
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.block-buffer]
+version = 0.10.4
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.proc-macro2]
+version = 1.0.107
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.idna_adapter]
+version = 1.2.2
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.regex]
+version = 1.13.1
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.dirs-sys]
+version = 0.4.1
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.clap_lex]
+version = 1.1.1
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.utf8parse]
+version = 0.2.2
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.mio]
+version = 1.2.4
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.signal-hook-registry]
+version = 1.4.8
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.shlex]
+version = 2.0.1
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.zerovec-derive]
+version = 0.11.7
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.serde_derive]
+version = 1.0.229
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.potential_utf]
+version = 0.1.6
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.encoding_rs]
+version = 0.8.44
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.cc]
+version = 1.11.0
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.regex-syntax]
+version = 0.8.11
+checksum = cached
 source = https://crates.io
 
 [dependency.rust.tokio]
-version = 1.40
-checksum = sha256:0000000000000000000000000000000000000000000000000000000000000000
+version = 1.54.1
+checksum = cached
 source = https://crates.io
 
-[dependency.rust.thiserror]
-version = 1.0
-checksum = sha256:0000000000000000000000000000000000000000000000000000000000000000
+[dependency.rust.xattr]
+version = 1.7.0
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.icu_provider]
+version = 2.4.0
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.reqwest]
+version = 0.12.28
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.pkg-config]
+version = 0.3.34
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.crypto-common]
+version = 0.1.7
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.icu_normalizer_data]
+version = 2.4.0
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.anstyle-query]
+version = 1.1.5
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.flate2]
+version = 1.1.10
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.tracing]
+version = 0.1.44
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.sharded-slab]
+version = 0.1.7
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.icu_properties]
+version = 2.4.0
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.slab]
+version = 0.4.12
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.anstyle-parse]
+version = 1.0.0
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.tower-http]
+version = 0.6.11
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.log]
+version = 0.4.35
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.heck]
+version = 0.5.0-rc.1
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.smallvec]
+version = 1.16.4
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.serde_urlencoded]
+version = 0.7.1
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.foreign-types]
+version = 0.3.2
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.parking_lot_core]
+version = 0.9.12
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.idna]
+version = 1.1.0
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.foreign-types-shared]
+version = 0.1.1
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.http]
+version = 1.5.0
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.tracing-core]
+version = 0.1.36
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.version_check]
+version = 0.9.5
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.anyhow]
+version = 1.0.104
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.crc32fast]
+version = 1.5.4
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.same-file]
+version = 1.0.6
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.zerotrie]
+version = 0.2.5
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.icu_collections]
+version = 2.4.0
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.zerofrom-derive]
+version = 0.1.8
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.rustix]
+version = 1.1.6
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.cfg-if]
+version = 1.0.5
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.syn]
+version = 3.0.9
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.mime]
+version = 0.3.18
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.litemap]
+version = 0.8.3
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.linux-raw-sys]
+version = 0.12.1
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.hyper-tls]
+version = 0.6.0
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.miniz_oxide]
+version = 0.9.1
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.generic-array]
+version = 0.14.7
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.futures-task]
+version = 0.3.34
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.icu_locale_core]
+version = 2.4.0
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.ipnet]
+version = 2.12.2
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.yoke-derive]
+version = 0.8.4
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.once_cell]
+version = 1.21.4
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.openssl-sys]
+version = 0.9.118
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.tracing-subscriber]
+version = 0.3.23
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.httparse]
+version = 1.10.1
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.walkdir]
+version = 2.5.0
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.core_detect]
+version = 1.0.0
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.tower]
+version = 0.5.3
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.futures-sink]
+version = 0.3.34
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.socket2]
+version = 0.6.5
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.libc]
+version = 0.2.191
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.h2]
+version = 0.4.20
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.itoa]
+version = 1.0.18
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.is_terminal_polyfill]
+version = 1.70.2
+checksum = cached
 source = https://crates.io
 
 [dependency.rust.tar]
-version = 0.4
-checksum = sha256:0000000000000000000000000000000000000000000000000000000000000000
+version = 0.4.46
+checksum = cached
 source = https://crates.io
 
-[dependency.rust.sha2]
-version = 0.10
-checksum = sha256:0000000000000000000000000000000000000000000000000000000000000000
+[dependency.rust.sync_wrapper]
+version = 1.0.2
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.matchers]
+version = 0.2.0
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.tokio-native-tls]
+version = 0.3.1
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.syn]
+version = 2.0.119
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.clap_builder]
+version = 4.6.7
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.simd-adler32]
+version = 0.3.10
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.bytes]
+version = 1.12.1
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.openssl]
+version = 0.10.82
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.yoke]
+version = 0.8.4
+checksum = cached
 source = https://crates.io
 
 [dependency.rust.glob]
-version = 0.3
-checksum = sha256:0000000000000000000000000000000000000000000000000000000000000000
+version = 0.3.4
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.zmij]
+version = 1.0.23
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.simdutf8]
+version = 0.1.5
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.quote]
+version = 1.0.47
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.try-lock]
+version = 0.2.5
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.stable_deref_trait]
+version = 1.2.1
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.tracing-log]
+version = 0.2.0
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.icu_properties_data]
+version = 2.4.0
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.base64]
+version = 0.22.1
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.tower-layer]
+version = 0.3.3
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.zerofrom]
+version = 0.1.8
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.zerovec]
+version = 0.11.9
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.http-body]
+version = 1.1.0
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.rustls-pki-types]
+version = 1.15.1
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.tokio-macros]
+version = 2.7.2
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.errno]
+version = 0.3.14
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.unicode-ident]
+version = 1.0.27
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.sha2]
+version = 0.10.9
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.serde_json]
+version = 1.0.154
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.icu_normalizer]
+version = 2.4.0
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.dirs]
+version = 5.0.1
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.scopeguard]
+version = 1.2.0
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.base64]
+version = 0.23.1
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.chrono]
+version = 0.4.45
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.form_urlencoded]
+version = 1.2.2
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.clap_derive]
+version = 4.6.7
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.hyper]
+version = 1.12.0
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.futures-core]
+version = 0.3.34
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.native-tls]
+version = 0.2.18
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.aho-corasick]
+version = 1.1.5
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.anstyle]
+version = 1.0.14
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.indexmap]
+version = 2.14.2
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.percent-encoding]
+version = 2.3.2
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.atomic-waker]
+version = 1.1.2
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.strsim]
+version = 0.11.1
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.regex-automata]
+version = 0.4.18
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.lazy_static]
+version = 1.5.1
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.hashbrown]
+version = 0.17.1
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.num-traits]
+version = 0.2.19
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.zeroize]
+version = 1.9.1
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.tokio-util]
+version = 0.7.20
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.equivalent]
+version = 1.0.3
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.openssl-macros]
+version = 0.1.1
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.filetime]
+version = 0.2.29
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.anstream]
+version = 1.0.0
+checksum = cached
+source = https://crates.io
+
+[dependency.rust.memchr]
+version = 2.8.3
+checksum = cached
 source = https://crates.io
 

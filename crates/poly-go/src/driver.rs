@@ -24,6 +24,10 @@ pub struct GoTarget {
     pub build_tags: Vec<String>,
     pub flags: Vec<String>,
     pub target_type: String, // "bin", "lib", "plugin"
+    /// Target GOOS (e.g. "linux", "windows"); None = host
+    pub goos: Option<String>,
+    /// Target GOARCH (e.g. "amd64"); None = host
+    pub goarch: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -51,10 +55,18 @@ impl GoDriver {
 
         if output.status.success() {
             let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            Ok(PathBuf::from(path))
-        } else {
-            anyhow::bail!("go not found in PATH")
+            return Ok(PathBuf::from(path));
         }
+
+        // Fallback: user-local Go installation
+        if let Ok(home) = std::env::var("HOME") {
+            let local = PathBuf::from(home).join(".local/go/bin/go");
+            if local.exists() {
+                return Ok(local);
+            }
+        }
+
+        anyhow::bail!("go not found in PATH")
     }
 
     /// Find GOPATH
@@ -96,6 +108,12 @@ impl GoDriver {
         env.insert("GOPATH".to_string(), self.gopath.display().to_string());
         env.insert("GO111MODULE".to_string(), "on".to_string());
         env.insert("CGO_ENABLED".to_string(), if target.cgo { "1" } else { "0" }.to_string());
+        if let Some(goos) = &target.goos {
+            env.insert("GOOS".to_string(), goos.clone());
+        }
+        if let Some(goarch) = &target.goarch {
+            env.insert("GOARCH".to_string(), goarch.clone());
+        }
 
         // Create temporary go.mod if needed
         let go_mod_path = work_dir.join("go.mod");
@@ -238,6 +256,12 @@ impl GoDriver {
         cmd.env("GOPATH", &self.gopath);
         cmd.env("GO111MODULE", "on");
         cmd.env("CGO_ENABLED", "1");
+        if let Some(goos) = &target.goos {
+            cmd.env("GOOS", goos);
+        }
+        if let Some(goarch) = &target.goarch {
+            cmd.env("GOARCH", goarch);
+        }
 
         debug!("Running: {:?}", cmd);
 
@@ -250,6 +274,33 @@ impl GoDriver {
 
         info!("Successfully compiled Go target with CGO: {}", target.name);
         Ok(())
+    }
+
+    /// Run `go test` on a prepared module work dir. Returns pass/fail.
+    pub fn test_package(&self, work_dir: &Path, package: &str, goos: Option<&str>) -> Result<bool> {
+        let mut cmd = Command::new(&self.go_path);
+        cmd.arg("test").arg(package);
+        cmd.current_dir(work_dir);
+        cmd.env("GOPATH", &self.gopath);
+        cmd.env("GO111MODULE", "on");
+        cmd.env("CGO_ENABLED", "0");
+        if let Some(goos) = goos {
+            cmd.env("GOOS", goos);
+        }
+        let out = cmd.output().context("Failed to run go test")?;
+        print!("{}", String::from_utf8_lossy(&out.stdout));
+        eprint!("{}", String::from_utf8_lossy(&out.stderr));
+        Ok(out.status.success())
+    }
+
+    /// Run `go vet` on a prepared module work dir.
+    pub fn vet_package(&self, work_dir: &Path, package: &str) -> Result<std::process::Output> {
+        let mut cmd = Command::new(&self.go_path);
+        cmd.arg("vet").arg(package);
+        cmd.current_dir(work_dir);
+        cmd.env("GOPATH", &self.gopath);
+        cmd.env("GO111MODULE", "on");
+        cmd.output().context("Failed to run go vet")
     }
 
     /// Get Go version

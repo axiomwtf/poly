@@ -1,11 +1,16 @@
 //! Poly CLI entry point
 
+mod crates_io;
+mod extras;
+
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use poly_config::parse_poly_ini;
-use poly_resolver::{DependencyResolver, LockFile};
+use poly_resolver::{DependencyResolver, LockEntry, LockFile};
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use tracing::{debug, info};
+use std::process::Command;
+use tracing::{debug, info, warn};
 use tracing_subscriber;
 
 #[derive(Parser)]
@@ -31,6 +36,9 @@ enum Commands {
         release: bool,
         #[arg(short, long)]
         config: Option<String>,
+        /// Skip creating the combined .vfsx.tar.zst package after building
+        #[arg(long)]
+        no_package: bool,
     },
     /// Add a dependency
     Add {
@@ -79,18 +87,146 @@ enum Commands {
     Uninstall {
         package: String,
     },
+    /// Run tests across all languages
+    Test {
+        target: Option<String>,
+        #[arg(long)]
+        coverage: bool,
+        #[arg(long)]
+        benchmark: bool,
+    },
+    /// Run linters across all languages
+    Lint {
+        target: Option<String>,
+    },
+    /// Format all sources
+    Fmt,
+    /// Generate documentation
+    Doc {
+        #[arg(long)]
+        open: bool,
+        #[arg(long)]
+        serve: bool,
+    },
+    /// Version management
+    Version {
+        #[arg(short, long)]
+        bump: Option<String>,
+        #[arg(long)]
+        check: bool,
+        #[arg(long)]
+        changelog: bool,
+    },
+    /// Generate CI configuration
+    Ci {
+        provider: String,
+    },
+    /// Migrate from another build system
+    Migrate {
+        from: String,
+    },
+    /// Generate shell completions
+    Completion {
+        shell: String,
+    },
+    /// Manage trusted signing keys
+    Trust {
+        #[arg(short, long)]
+        add: Option<String>,
+        #[arg(short, long)]
+        list: bool,
+        #[arg(short, long)]
+        remove: Option<String>,
+    },
+    /// Cache management
+    Cache {
+        #[arg(short, long)]
+        stats: bool,
+    },
+    /// Show outdated dependencies
+    Outdated,
+    /// Show dependency tree
+    Tree,
+    /// Toolchain management
+    Toolchain {
+        #[arg(short, long)]
+        list: bool,
+        #[arg(short, long)]
+        install: Option<String>,
+        #[arg(short, long)]
+        use_: Option<String>,
+    },
+    /// Security audit
+    Audit {
+        #[arg(long)]
+        fix: bool,
+    },
+    /// Generate SBOM
+    Sbom,
+    /// Profile a build
+    Profile,
+    /// IDE integration
+    Ide {
+        kind: String,
+    },
+    /// Tag, build and publish a release
+    Release {
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Review code (lint + optional tests)
+    Review {
+        #[arg(long)]
+        strict: bool,
+    },
+    /// Show git diff
+    Diff,
+    /// Generate a flamegraph
+    Flamegraph,
+    /// Registry statistics
+    Stats,
+    /// Log in to a registry (stores API token locally)
+    Login {
+        /// Registry name (default: crates-io)
+        registry: Option<String>,
+        /// Provide the token on the command line instead of being prompted
+        #[arg(long)]
+        token: Option<String>,
+    },
+    /// Log out of a registry (removes stored API token)
+    Logout {
+        /// Registry name (default: crates-io)
+        registry: Option<String>,
+    },
+    /// Virtual environments
+    Env {
+        args: Vec<String>,
+    },
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize tracing
-    tracing_subscriber::fmt::init();
+    // Default to INFO; set RUST_LOG=debug for verbose compiler output.
+    tracing_subscriber::fmt()
+        .with_env_filter({
+            let rust_log = std::env::var("RUST_LOG").unwrap_or_default();
+            if rust_log.trim().is_empty() {
+                tracing_subscriber::EnvFilter::new("info")
+            } else {
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+            }
+        })
+        .init();
 
     let cli = Cli::parse();
 
     match cli.command {
         Commands::Init { name } => cmd_init(name),
-        Commands::Build { target, release, config } => cmd_build(target, release, config).await,
+        Commands::Build { target, release, config, no_package } => {
+            cmd_build(target, release, config, no_package).await
+        }
         Commands::Add { dependency } => cmd_add(dependency),
         Commands::Remove { dependency } => cmd_remove(dependency),
         Commands::Update { all } => cmd_update(all),
@@ -102,6 +238,57 @@ async fn main() -> Result<()> {
         Commands::Publish { config } => cmd_publish(config).await,
         Commands::Install { package, local } => cmd_install(package, local).await,
         Commands::Uninstall { package } => cmd_uninstall(package).await,
+        Commands::Test { target, coverage, benchmark } => {
+            extras::cmd_test(target, coverage, benchmark).await
+        }
+        Commands::Lint { target } => extras::cmd_lint(target).await,
+        Commands::Fmt => extras::cmd_fmt(),
+        Commands::Doc { open, serve } => extras::cmd_doc(open, serve),
+        Commands::Version { bump, check, changelog } => {
+            if let Some(level) = bump {
+                extras::cmd_version_bump(&level)
+            } else if check {
+                extras::cmd_version_check()
+            } else if changelog {
+                extras::cmd_version_changelog()
+            } else {
+                extras::cmd_version_check()
+            }
+        }
+        Commands::Ci { provider } => extras::cmd_ci(&provider),
+        Commands::Migrate { from } => extras::cmd_migrate(&from),
+        Commands::Completion { shell } => extras::cmd_completion(&shell),
+        Commands::Trust { add, remove, .. } => {
+            if let Some(path) = add {
+                extras::cmd_trust_add(&path)
+            } else if let Some(name) = remove {
+                extras::cmd_trust_remove(&name)
+            } else {
+                extras::cmd_trust_list()
+            }
+        }
+        Commands::Cache { .. } => extras::cmd_cache_stats(),
+        Commands::Outdated => extras::cmd_outdated().await,
+        Commands::Tree => extras::cmd_tree(),
+        Commands::Toolchain { install, use_, .. } => {
+            if install.is_some() || use_.is_some() {
+                extras::cmd_toolchain("use")
+            } else {
+                extras::cmd_toolchain("list")
+            }
+        }
+        Commands::Audit { fix } => extras::cmd_audit(fix),
+        Commands::Sbom => extras::cmd_sbom(),
+        Commands::Profile => extras::cmd_profile(),
+        Commands::Ide { kind } => extras::cmd_ide(&kind),
+        Commands::Release { dry_run } => extras::cmd_release(dry_run),
+        Commands::Review { strict } => extras::cmd_review(strict).await,
+        Commands::Diff => extras::cmd_diff(),
+        Commands::Flamegraph => extras::cmd_flamegraph(),
+        Commands::Stats => extras::cmd_stats(),
+        Commands::Login { registry, token } => cmd_login(registry, token),
+        Commands::Logout { registry } => cmd_logout(registry),
+        Commands::Env { args } => extras::cmd_env(&args),
     }
 }
 
@@ -149,7 +336,7 @@ targets = rust:lib
     Ok(())
 }
 
-async fn cmd_build(_target: Option<String>, _release: bool, config_path: Option<String>) -> Result<()> {
+async fn cmd_build(_target: Option<String>, release: bool, config_path: Option<String>, no_package: bool) -> Result<()> {
     info!("Building project");
 
     // Load configuration
@@ -157,20 +344,33 @@ async fn cmd_build(_target: Option<String>, _release: bool, config_path: Option<
     let config = parse_poly_ini(&config_file)?;
     debug!("Loaded config for project: {}", config.project.name);
 
-    // Create output directory
-    let output_dir = PathBuf::from("target");
+    // Run pre-build hook if configured
+    if let Some(hooks) = &config.hooks {
+        if let Some(hook) = &hooks.pre_build {
+            info!("Running pre-build hook: {}", hook.command);
+            let status = Command::new("sh")
+                .arg("-c")
+                .arg(&hook.command)
+                .status()?;
+            if !status.success() {
+                anyhow::bail!("pre-build hook failed: {}", hook.command);
+            }
+        }
+    }
+
+    // Create output directory: dist/{profile}/
+    let profile = if release { "release" } else { "debug" };
+    let output_dir = PathBuf::from("dist").join(profile);
     std::fs::create_dir_all(&output_dir)?;
 
-    // Compile dependencies first
-    let compiled_deps = if !config.dependencies.rust.is_empty() {
-        info!("Compiling Rust dependencies...");
-        let dep_compiler = poly_core::DependencyCompiler::new(output_dir.clone())?;
-        dep_compiler.compile_dependencies(&config.dependencies.rust).await?
-    } else {
-        std::collections::HashMap::new()
-    };
+    // Target triples for cross-compilation
+    let targets = vec![
+        "x86_64-unknown-linux-gnu",
+        "x86_64-pc-windows-gnu",
+    ];
 
-    // Resolve dependencies
+    // Resolve dependencies (lock entries for c/go; rust versions are
+    // resolved for real during dependency compilation below)
     let resolver = DependencyResolver::new();
     let entries = resolver.resolve(
         &config.dependencies.rust,
@@ -178,27 +378,160 @@ async fn cmd_build(_target: Option<String>, _release: bool, config_path: Option<
         &config.dependencies.go,
     )?;
 
-    // Generate lock file
+    // Honor versions pinned in an existing poly.lock
+    let locked_versions = read_locked_rust_versions();
+
+    // Build each target for each platform
+    let mut all_binaries: Vec<(String, PathBuf)> = Vec::new(); // (platform, path)
+    let mut rust_lock_entries: Vec<LockEntry> = Vec::new();
+    let mut first_platform = true;
+
+    for target_triple in &targets {
+        let platform = if target_triple.contains("windows") { "windows" } else { "linux" };
+        let platform_dir = output_dir.join(platform);
+        std::fs::create_dir_all(&platform_dir)?;
+        
+        info!("Building for platform: {} ({})", platform, target_triple);
+
+        let compiled_deps = if !config.dependencies.rust.is_empty() {
+            info!("Compiling Rust dependencies for {}...", target_triple);
+            let dep_compiler = poly_core::DependencyCompiler::new(output_dir.clone())?;
+            let workspace_dir = std::env::current_dir()?;
+            let compiled = dep_compiler
+                .compile_dependencies(&config.dependencies.rust, &workspace_dir, target_triple, profile, &locked_versions)
+                .await?;
+
+            // Record the real resolved versions for poly.lock (once)
+            if first_platform {
+                let mut seen = HashSet::new();
+                for dep in compiled.values() {
+                    if seen.insert((dep.name.clone(), dep.version.clone())) {
+                        rust_lock_entries.push(LockEntry {
+                            language: "rust".to_string(),
+                            name: dep.name.clone(),
+                            version: dep.version.clone(),
+                            checksum: dep.checksum.clone(),
+                            source: "https://crates.io".to_string(),
+                            signature: None,
+                        });
+                    }
+                }
+            }
+            compiled
+        } else {
+            std::collections::HashMap::new()
+        };
+
+        let mut compiled_workspace: HashMap<String, PathBuf> = HashMap::new();
+        let mut platform_binaries: Vec<PathBuf> = Vec::new();
+        let build_targets = parse_build_targets(&config)?;
+        
+        for target_id in build_targets {
+            if let Some(target_config) = config.targets.get(&target_id) {
+                match target_config.language.as_str() {
+                    "rust" => {
+                        let artifact_path = build_rust_target(
+                            &target_id, 
+                            target_config, 
+                            &config, 
+                            &platform_dir, 
+                            &compiled_deps, 
+                            &compiled_workspace,
+                            target_triple,
+                        )?;
+                        // Store the compiled artifact for dependents
+                        let crate_name = target_id.replace('-', "_");
+                        if let Some(path) = artifact_path {
+                            if path.exists() {
+                                compiled_workspace.insert(crate_name, path.clone());
+                                // Track binaries for VFSX packaging
+                                if target_config.type_ == "bin" {
+                                    platform_binaries.push(path);
+                                }
+                            }
+                        }
+                    }
+                    "c" | "cpp" => {
+                        let artifact_path = build_c_target(
+                            &target_id, 
+                            target_config, 
+                            &config, 
+                            &platform_dir,
+                            target_triple,
+                        )?;
+                        if target_config.type_ == "bin" {
+                            if let Some(path) = artifact_path {
+                                if path.exists() {
+                                    platform_binaries.push(path);
+                                }
+                            }
+                        }
+                    }
+                    "go" => {
+                        let artifact_path = build_go_target(
+                            &target_id, 
+                            target_config, 
+                            &config, 
+                            &platform_dir,
+                            target_triple,
+                        )?;
+                        if target_config.type_ == "bin" {
+                            if let Some(path) = artifact_path {
+                                if path.exists() {
+                                    platform_binaries.push(path);
+                                }
+                            }
+                        }
+                    }
+                    _ => {
+                        info!("Unknown language: {}", target_config.language);
+                    }
+                }
+            }
+        }
+        
+        // Collect binaries for this platform
+        for binary in platform_binaries {
+            all_binaries.push((platform.to_string(), binary));
+        }
+        first_platform = false;
+    }
+
+    // Write poly.lock with real resolved versions
     let mut lockfile = LockFile::new();
-    for entry in entries {
+    for entry in rust_lock_entries {
         lockfile.add_entry(entry);
+    }
+    for entry in entries {
+        if entry.language != "rust" {
+            lockfile.add_entry(entry);
+        }
     }
     lockfile.write("poly.lock")?;
 
-    // Build each target
-    for (target_id, target_config) in &config.targets {
-        match target_config.language.as_str() {
-            "rust" => {
-                build_rust_target(target_id, target_config, &config, &output_dir, &compiled_deps)?;
-            }
-            "c" | "cpp" => {
-                build_c_target(target_id, target_config, &config, &output_dir)?;
-            }
-            "go" => {
-                build_go_target(target_id, target_config, &config, &output_dir)?;
-            }
-            _ => {
-                info!("Unknown language: {}", target_config.language);
+    // Package all binaries as VFSX archives (one per platform)
+    if !all_binaries.is_empty() {
+        package_binaries_as_vfsx(&all_binaries, &output_dir, &config.project.name, profile)?;
+    }
+
+    // Create the combined installable package unless --no-package
+    if !no_package && !all_binaries.is_empty() {
+        match create_combined_package(&config, profile).await {
+            Ok(pkg) => info!("Created package: {}", pkg.display()),
+            Err(e) => warn!("Packaging failed: {}", e),
+        }
+    }
+
+    // Run post-build hook if configured
+    if let Some(hooks) = &config.hooks {
+        if let Some(hook) = &hooks.post_build {
+            info!("Running post-build hook: {}", hook.command);
+            let status = Command::new("sh")
+                .arg("-c")
+                .arg(&hook.command)
+                .status()?;
+            if !status.success() {
+                warn!("post-build hook failed: {}", hook.command);
             }
         }
     }
@@ -208,19 +541,171 @@ async fn cmd_build(_target: Option<String>, _release: bool, config_path: Option<
     Ok(())
 }
 
+/// Package built binaries as VFSX archives (one per platform)
+/// Create the combined `dist/{name}-{version}.vfsx.tar.zst` package with
+/// package.json + poly.lock + per-platform binaries under bin/.
+async fn create_combined_package(config: &poly_config::Config, profile: &str) -> Result<PathBuf> {
+    let platforms = config
+        .publish
+        .as_ref()
+        .map(|p| p.platforms.clone())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| vec![
+            "x86_64-linux".to_string(),
+            "x86_64-windows".to_string(),
+        ]);
+    let include_docs = config
+        .publish
+        .as_ref()
+        .map(|p| p.include_docs)
+        .unwrap_or(false);
+
+    let package_config = poly_package::PackageConfig {
+        name: config.project.name.clone(),
+        version: config.project.version.clone(),
+        description: config.project.description.clone(),
+        authors: config.project.authors.clone(),
+        license: config
+            .project
+            .license
+            .clone()
+            .unwrap_or_else(|| "UNLICENSED".to_string()),
+        platforms,
+        include_docs,
+        compression: "zstd".to_string(),
+        dependencies: sibling_crates(config),
+    };
+
+    let packager = poly_package::Packager::new(
+        package_config,
+        PathBuf::from("."),
+        PathBuf::from("dist"),
+        profile.to_string(),
+    );
+    packager.create_package().await
+}
+
+fn package_binaries_as_vfsx(
+    binaries: &[(String, PathBuf)], // (platform, path)
+    output_dir: &Path,
+    project_name: &str,
+    profile: &str,
+) -> Result<()> {
+    info!("Packaging {} binaries as VFSX archives", binaries.len());
+    
+    let vfsx = poly_vfsx::Vfsx::new(false);
+    
+    // Group binaries by platform
+    let mut by_platform: HashMap<String, Vec<PathBuf>> = HashMap::new();
+    for (platform, path) in binaries {
+        by_platform.entry(platform.clone()).or_default().push(path.clone());
+    }
+    
+    // Create one VFSX archive per platform
+    for (platform, platform_binaries) in by_platform {
+        info!("Packaging {} binaries for {}", platform_binaries.len(), platform);
+        
+        // Create a temporary directory with all binaries for this platform
+        let temp_dir = output_dir.join(format!(".vfsx_temp_{}", platform));
+        std::fs::create_dir_all(&temp_dir)?;
+        
+        for binary_path in &platform_binaries {
+            let binary_name = binary_path.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("binary");
+            let binary_in_temp = temp_dir.join(binary_name);
+            std::fs::copy(binary_path, &binary_in_temp)?;
+        }
+        
+        // Create VFSX archive for this platform (.vfsx.tar.zst per spec §8.1)
+        let vfsx_path = output_dir.join(format!("{}-{}.{}.vfsx.tar.zst", project_name, platform, profile));
+        vfsx.create(&temp_dir, &vfsx_path, "zstd")?;
+        
+        // Clean up temp directory
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        
+        info!("Created VFSX package: {}", vfsx_path.display());
+    }
+    
+    Ok(())
+}
+
+/// Parse build targets in dependency order
+pub(crate) fn parse_build_targets(config: &poly_config::Config) -> Result<Vec<String>> {
+    let default_targets = &config.build.default.targets;
+    
+    // Build dependency graph for workspace crates
+    let mut graph: HashMap<String, Vec<String>> = HashMap::new();
+    
+    for target in default_targets {
+        // Strip language prefix (e.g., "rust:poly-cli" -> "poly-cli")
+        let crate_name = target.split(':').last().unwrap_or(target);
+        let deps = config.dependencies.workspace.get(crate_name)
+            .map(|deps| deps.keys().cloned().collect())
+            .unwrap_or_default();
+        graph.insert(crate_name.to_string(), deps);
+    }
+    
+    // Topological sort
+    let mut visited = HashSet::new();
+    let mut visiting = HashSet::new();
+    let mut result = Vec::new();
+    
+    for target in default_targets {
+        let crate_name = target.split(':').last().unwrap_or(target);
+        if !visited.contains(crate_name) {
+            topo_sort(crate_name, &graph, &mut visited, &mut visiting, &mut result)?;
+        }
+    }
+    
+    Ok(result)
+}
+
+fn topo_sort(
+    node: &str,
+    graph: &HashMap<String, Vec<String>>,
+    visited: &mut HashSet<String>,
+    visiting: &mut HashSet<String>,
+    result: &mut Vec<String>,
+) -> Result<()> {
+    if visited.contains(node) {
+        return Ok(());
+    }
+    
+    if visiting.contains(node) {
+        anyhow::bail!("Circular dependency detected: {}", node);
+    }
+    
+    visiting.insert(node.to_string());
+    
+    if let Some(deps) = graph.get(node) {
+        for dep in deps {
+            topo_sort(dep, graph, visited, visiting, result)?;
+        }
+    }
+    
+    visiting.remove(node);
+    visited.insert(node.to_string());
+    result.push(node.to_string());
+    
+    Ok(())
+}
+
 fn build_rust_target(
     target_id: &str,
     target_config: &poly_config::Target,
     config: &poly_config::Config,
     output_dir: &Path,
     compiled_deps: &std::collections::HashMap<String, poly_core::CompiledDependency>,
-) -> Result<()> {
-    info!("Building Rust target: {}", target_id);
+    compiled_workspace: &HashMap<String, PathBuf>,
+    target_triple: &str,
+) -> Result<Option<PathBuf>> {
+    info!("Building Rust target: {} for {}", target_id, target_triple);
 
     let sources = expand_globs(&target_config.sources)?;
     if sources.is_empty() {
         info!("No sources found for target {}", target_id);
-        return Ok(());
+        return Ok(None);
     }
 
     let driver = poly_rust::RustDriver::new()?;
@@ -242,54 +727,110 @@ fn build_rust_target(
         dependencies: Vec::new(), // TODO: Resolve from config
         source: sources[0].clone(),
         flags: target_config.flags.clone(),
+        target_triple: Some(target_triple.to_string()),
+        env: manifest_env(target_id, config, &sources[0]),
     };
 
-    // Determine output path
+    // Determine output path (add target triple subdirectory)
+    let target_dir = output_dir.join(target_triple);
+    std::fs::create_dir_all(&target_dir)?;
+    
     let output = match rust_target.crate_type.as_str() {
-        "bin" => output_dir.join(&rust_target.name),
-        _ => output_dir.join(format!("lib{}.rlib", rust_target.name)),
+        "bin" => {
+            // Windows binaries need .exe extension
+            let ext = if target_triple.contains("windows") { ".exe" } else { "" };
+            target_dir.join(format!("{}{}", rust_target.name, ext))
+        }
+        _ => target_dir.join(format!("lib{}.rlib", rust_target.name)),
     };
 
-    // Get dependency paths from compiled dependencies
-    let dep_paths: Vec<PathBuf> = compiled_deps.values()
-        .map(|dep| dep.rlib_path.clone())
-        .collect();
-
-    // Build --extern flags
-    let mut extern_args = Vec::new();
-    for (name, dep) in compiled_deps {
-        extern_args.push("--extern".to_string());
-        extern_args.push(format!("{}={}", name.replace('-', "_"), dep.rlib_path.display()));
-    }
-
-    // Get library search paths
-    let mut lib_paths = Vec::new();
-    for dep in compiled_deps.values() {
-        if let Some(parent) = dep.rlib_path.parent() {
-            lib_paths.push("-L".to_string());
-            lib_paths.push(parent.display().to_string());
-        }
-    }
-
-    // Add extern flags to target flags
+    // Build --extern and -L/--cfg flags for this target
     let mut all_flags = rust_target.flags.clone();
-    all_flags.extend(extern_args);
-    all_flags.extend(lib_paths);
+    all_flags.extend(rust_dep_args(
+        target_id,
+        target_config,
+        config,
+        compiled_deps,
+        compiled_workspace,
+        target_triple,
+    ));
 
     // Update target with new flags
     let mut rust_target_with_deps = rust_target.clone();
     rust_target_with_deps.flags = all_flags;
 
-    // Compile
+    // Compile - dependencies are passed via --extern flags in target.flags
     driver.compile(
         &sources[0],
         &output,
         &rust_target_with_deps,
-        &dep_paths,
+        &[], // Empty - we use --extern flags in target.flags
         None, // No build script for MVP
     )?;
 
-    Ok(())
+    Ok(Some(output))
+}
+
+/// Build --extern/-L/-l flags for a rust target: direct deps for the given
+/// triple, workspace path deps, and native link data from build scripts.
+pub(crate) fn rust_dep_args(
+    target_id: &str,
+    _target_config: &poly_config::Target,
+    config: &poly_config::Config,
+    compiled_deps: &std::collections::HashMap<String, poly_core::CompiledDependency>,
+    compiled_workspace: &HashMap<String, PathBuf>,
+    target_triple: &str,
+) -> Vec<String> {
+    let mut args = Vec::new();
+
+    for dep in compiled_deps.values() {
+        if dep.target != target_triple {
+            continue;
+        }
+        args.push("--extern".to_string());
+        args.push(format!("{}={}", dep.lib_name, dep.rlib_path.display()));
+    }
+
+    // Workspace dependencies (poly.ini keys use the hyphenated target id)
+    if let Some(workspace_deps) = config.dependencies.workspace.get(target_id) {
+        for dep_name in workspace_deps.keys() {
+            let dep_crate_name = dep_name.replace('-', "_");
+            if let Some(artifact_path) = compiled_workspace.get(&dep_crate_name) {
+                args.push("--extern".to_string());
+                args.push(format!("{}={}", dep_crate_name, artifact_path.display()));
+            }
+        }
+    }
+
+    // Library search paths — include host (proc-macro/build) artifact dirs
+    // too, since target rlibs reference them transitively. Also add native
+    // link-search paths emitted by build scripts (e.g. windows import libs).
+    for dep in compiled_deps.values() {
+        if let Some(parent) = dep.rlib_path.parent() {
+            args.push("-L".to_string());
+            args.push(parent.display().to_string());
+        }
+        if dep.target == target_triple {
+            if let Some(output) = &dep.build_script_output {
+                for path in &output.link_search_paths {
+                    args.push("-L".to_string());
+                    args.push(path.display().to_string());
+                }
+                for lib in &output.link_libs {
+                    args.push("-l".to_string());
+                    args.push(lib.clone());
+                }
+            }
+        }
+    }
+    for artifact_path in compiled_workspace.values() {
+        if let Some(parent) = artifact_path.parent() {
+            args.push("-L".to_string());
+            args.push(parent.display().to_string());
+        }
+    }
+
+    args
 }
 
 fn build_c_target(
@@ -297,16 +838,18 @@ fn build_c_target(
     target_config: &poly_config::Target,
     _config: &poly_config::Config,
     output_dir: &Path,
-) -> Result<()> {
-    info!("Building C/C++ target: {}", target_id);
+    target_triple: &str,
+) -> Result<Option<PathBuf>> {
+    info!("Building C/C++ target: {} for {}", target_id, target_triple);
 
     let sources = expand_globs(&target_config.sources)?;
     if sources.is_empty() {
         info!("No sources found for target {}", target_id);
-        return Ok(());
+        return Ok(None);
     }
 
-    let driver = poly_c::CDriver::new()?;
+    let base_driver = poly_c::CDriver::new()?;
+    let driver = base_driver.for_target(target_triple)?;
 
     // Create C target
     let c_target = poly_c::CTarget {
@@ -327,27 +870,35 @@ fn build_c_target(
         flags: target_config.flags.clone(),
         defines: std::collections::HashMap::new(), // TODO: Parse from config
         dependencies: Vec::new(), // TODO: Resolve from config
+        target_triple: target_triple.to_string(),
     };
 
-    // Create target-specific output directory
-    let target_output_dir = output_dir.join(target_id);
+    // Per-triple output dir, matching the Rust layout:
+    // dist/{profile}/{platform}/{triple}/
+    let target_dir = output_dir.join(target_triple);
+    std::fs::create_dir_all(&target_dir)?;
+
+    // Object files go in a hidden staging dir so they can't collide with
+    // the final binary path.
+    let target_output_dir = target_dir.join(".objects").join(target_id);
     std::fs::create_dir_all(&target_output_dir)?;
 
     // Compile all sources
     let objects = driver.compile_target(&c_target, &target_output_dir)?;
 
-    // Determine output path
+    // Determine output path (add .exe for Windows)
+    let ext = if target_triple.contains("windows") { ".exe" } else { "" };
     let output = match c_target.target_type.as_str() {
-        "bin" => output_dir.join(target_id),
-        "static-lib" => output_dir.join(format!("lib{}.a", target_id)),
-        "shared-lib" => output_dir.join(format!("lib{}.so", target_id)),
-        _ => output_dir.join(format!("lib{}.a", target_id)),
+        "bin" => target_dir.join(format!("{}{}", target_id, ext)),
+        "static-lib" => target_dir.join(format!("lib{}.a", target_id)),
+        "shared-lib" => target_dir.join(format!("lib{}.so", target_id)),
+        _ => target_dir.join(format!("lib{}.a", target_id)),
     };
 
     // Link
     driver.link(&c_target, &objects, &output)?;
 
-    Ok(())
+    Ok(Some(output))
 }
 
 fn build_go_target(
@@ -355,13 +906,14 @@ fn build_go_target(
     target_config: &poly_config::Target,
     config: &poly_config::Config,
     output_dir: &Path,
-) -> Result<()> {
-    info!("Building Go target: {}", target_id);
+    target_triple: &str,
+) -> Result<Option<PathBuf>> {
+    info!("Building Go target: {} for {}", target_id, target_triple);
 
     let sources = expand_globs(&target_config.sources)?;
     if sources.is_empty() {
         info!("No sources found for target {}", target_id);
-        return Ok(());
+        return Ok(None);
     }
 
     let driver = poly_go::GoDriver::new()?;
@@ -383,17 +935,57 @@ fn build_go_target(
             "lib" => "lib".to_string(),
             _ => "bin".to_string(),
         },
+        goos: None,
+        goarch: None,
     };
 
-    // Create work directory
-    let work_dir = output_dir.join(target_id);
+    // Create work directory with a go module layout: sources are copied
+    // into work_dir/<pkg>/ and built as the relative package "./<pkg>".
+    // Hidden staging dir avoids colliding with the output binary path.
+    let target_dir = output_dir.join(target_triple);
+    std::fs::create_dir_all(&target_dir)?;
+    let work_dir = target_dir.join(".gobuild").join(target_id);
     std::fs::create_dir_all(&work_dir)?;
 
-    // Determine output path
-    let output = match go_target.target_type.as_str() {
-        "bin" => output_dir.join(target_id),
-        _ => output_dir.join(format!("lib{}.a", target_id)),
+    let (goos, goarch) = if target_triple.contains("windows") {
+        (Some("windows".to_string()), Some("amd64".to_string()))
+    } else if target_triple.contains("linux") {
+        (Some("linux".to_string()), Some("amd64".to_string()))
+    } else {
+        (None, None)
     };
+
+    // All sources must belong to a single Go package (one directory).
+    let pkg_dir = sources[0]
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."));
+    let pkg_name = pkg_dir
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| "pkg".to_string());
+    let dest_dir = work_dir.join(&pkg_name);
+    std::fs::create_dir_all(&dest_dir)?;
+    for src in &sources {
+        if let Some(name) = src.file_name() {
+            std::fs::copy(src, dest_dir.join(name))?;
+        }
+    }
+
+    // Determine output path (add .exe for Windows). Must be absolute:
+    // `go build` runs with cwd = work_dir.
+    let ext = if target_triple.contains("windows") { ".exe" } else { "" };
+    let output = match go_target.target_type.as_str() {
+        "bin" => target_dir.join(format!("{}{}", target_id, ext)),
+        _ => target_dir.join(format!("lib{}.a", target_id)),
+    };
+    let output = std::path::absolute(&output)?;
+
+    let mut go_target = go_target;
+    go_target.package = format!("./{}", pkg_name);
+    go_target.goos = goos;
+    go_target.goarch = goarch;
 
     // Compile
     if go_target.cgo {
@@ -402,11 +994,11 @@ fn build_go_target(
         driver.compile(&go_target, &output, &work_dir)?;
     }
 
-    Ok(())
+    Ok(Some(output))
 }
 
 /// Expand glob patterns in source lists
-fn expand_globs(patterns: &[String]) -> Result<Vec<PathBuf>> {
+pub(crate) fn expand_globs(patterns: &[String]) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
 
     for pattern in patterns {
@@ -549,27 +1141,43 @@ fn cmd_sign(keyfile: Option<String>) -> Result<()> {
 
     let config = parse_poly_ini("poly.ini")?;
 
-    // Use keyfile from config or command line
-    let keyfile_path = keyfile
-        .or_else(|| config.vfsx.as_ref().map(|v| v.keyfile.clone()))
-        .context("No keyfile specified. Use --keyfile or configure in poly.ini")?;
-
-    // For MVP, generate a keypair if it doesn't exist
-    let keyfile = PathBuf::from(&keyfile_path);
-    if !keyfile.exists() {
-        info!("Generating new keypair: {}", keyfile_path);
-        let vfsx = poly_vfsx::Vfsx::new(false);
-        vfsx.key_gen(&keyfile)?;
-    }
-
-    // Export public key
-    let public_key_path = keyfile.with_extension("pub");
+    // vfsx manages its own identity keypair in the user config dir;
+    // `key gen` is a no-op when keys already exist.
     let vfsx = poly_vfsx::Vfsx::new(false);
-    vfsx.key_export(&keyfile, &public_key_path)?;
+    vfsx.key_gen(false)?;
 
-    info!("Keypair generated and exported");
-    info!("  Private key: {}", keyfile.display());
-    info!("  Public key: {}", public_key_path.display());
+    // Export the public key archive for verifiers. The configured keyfile
+    // (or --keyfile) names the exported pubkey archive.
+    let public_key_path = keyfile
+        .or_else(|| config.vfsx.as_ref().map(|v| v.keyfile.clone()))
+        .unwrap_or_else(|| "pubkey.vfsx".to_string());
+    vfsx.key_export(Path::new(&public_key_path))?;
+
+    info!("VFSX identity ready; public key exported to {}", public_key_path);
+
+    // Signing happens at archive creation time (vfsx create auto-signs with
+    // the loaded identity). Verify existing dist archives if present.
+    let dist = PathBuf::from("dist");
+    if dist.is_dir() {
+        let mut verified = 0usize;
+        for entry in walkdir::WalkDir::new(&dist) {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file()
+                && path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|n| n.contains(".vfsx"))
+                    .unwrap_or(false)
+                && vfsx.verify(path, Path::new(&public_key_path))?
+            {
+                verified += 1;
+            }
+        }
+        if verified > 0 {
+            info!("{} signed archive(s) verified", verified);
+        }
+    }
 
     Ok(())
 }
@@ -584,13 +1192,19 @@ fn cmd_verify(package: Option<String>) -> Result<()> {
         anyhow::bail!("Package path does not exist: {}", package_path);
     }
 
-    // Look for public key
-    let public_key_path = PathBuf::from("poly.pub");
-    if !public_key_path.exists() {
-        info!("No public key found at {}", public_key_path.display());
-        info!("Run 'poly sign' to generate keys first");
-        return Ok(());
-    }
+    // Look for public key archive (exported via `poly sign` / `vfsx key export`)
+    let public_key_path = ["pubkey.vfsx", "poly.pub"]
+        .iter()
+        .map(PathBuf::from)
+        .find(|p| p.exists());
+    let public_key_path = match public_key_path {
+        Some(p) => p,
+        None => {
+            info!("No public key found (pubkey.vfsx)");
+            info!("Run 'poly sign' to generate keys first");
+            return Ok(());
+        }
+    };
 
     let vfsx = poly_vfsx::Vfsx::new(false);
     
@@ -606,7 +1220,12 @@ fn cmd_verify(package: Option<String>) -> Result<()> {
             let entry = entry?;
             let file_path = entry.path();
             
-            if file_path.extension().map_or(false, |ext| ext == "vfsx") {
+            if file_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.contains(".vfsx"))
+                .unwrap_or(false)
+            {
                 if vfsx.verify(&file_path, &public_key_path)? {
                     info!("{}: verified", file_path.display());
                 } else {
@@ -626,10 +1245,18 @@ async fn cmd_publish(config_path: Option<String>) -> Result<()> {
     let config = parse_poly_ini(&config_file)?;
 
     // Check if publish config exists
-    let publish_config = config.publish
+    let publish_config = config
+        .publish
+        .clone()
         .context("No [publish] section found in poly.ini")?;
 
-    // Create package
+    // Publish packages the release build by default; fall back to debug.
+    let profile = if PathBuf::from("dist/release").is_dir() {
+        "release"
+    } else {
+        "debug"
+    };
+
     let package_config = poly_package::PackageConfig {
         name: config.project.name.clone(),
         version: config.project.version.clone(),
@@ -639,43 +1266,283 @@ async fn cmd_publish(config_path: Option<String>) -> Result<()> {
         platforms: publish_config.platforms.clone(),
         include_docs: publish_config.include_docs,
         compression: "zstd".to_string(),
+        dependencies: sibling_crates(&config),
     };
 
     let packager = poly_package::Packager::new(
         package_config,
-        PathBuf::from("target"),
+        PathBuf::from("."),
         PathBuf::from("dist"),
+        profile.to_string(),
     );
 
-    let packages = packager.create_package().await?;
+    let package = packager.create_package().await?;
 
-    info!("Created {} packages", packages.len());
-    for package in packages {
-        info!("  {}", package.display());
+    info!("Created package: {}", package.display());
+
+    // Publish each Rust target to crates.io as a .crate archive.
+    // The .crate contains poly.ini/poly.lock + sources + a stub Cargo.toml;
+    // poly.ini remains the source of truth for the actual build.
+    let rust_targets: Vec<String> = publish_targets(&config, &publish_config)
+        .into_iter()
+        .filter(|t| t.starts_with("rust:"))
+        .collect();
+
+    if !rust_targets.is_empty() {
+        let token = crates_io::resolve_crates_io_token().context(
+            "crates.io publish requires a token: run `poly login` or set CARGO_REGISTRY_TOKEN",
+        )?;
+        let project_root = std::env::current_dir()?;
+        let mut failures = Vec::new();
+        for target in &rust_targets {
+            let target_id = target.trim_start_matches("rust:");
+            match crates_io::publish_to_crates_io(
+                &config,
+                target_id,
+                &project_root,
+                &token,
+            )
+            .await
+            {
+                Ok(()) => {}
+                Err(e) => {
+                    let msg = format!("{}", e);
+                    if msg.contains("already uploaded") {
+                        info!("{} already published, skipping", crates_io::crate_name_for(&config, target_id));
+                    } else {
+                        warn!("Publish failed for {}: {}", target_id, msg);
+                        failures.push(format!("{}: {}", target_id, msg));
+                    }
+                }
+            }
+        }
+        if !failures.is_empty() {
+            anyhow::bail!("{} crate(s) failed to publish:\n{}", failures.len(), failures.join("\n"));
+        }
     }
 
-    // TODO: Upload to crates.io registry
-    info!("Package ready for publishing to crates.io");
+    // Upload the vfsx package to a custom registry when configured.
+    if let Some(registry) = &publish_config.registry {
+        upload_package(&package, &config.project.name, &config.project.version, registry, publish_config.token_env.as_deref()).await?;
+    } else if rust_targets.is_empty() {
+        info!("Package ready for publishing (no [publish] registry configured)");
+    }
 
     Ok(())
+}
+
+/// Resolve which `lang:target` specs `poly publish` should act on.
+/// Uses [publish] targets, falling back to [build.default] targets.
+fn cmd_login(registry: Option<String>, token: Option<String>) -> Result<()> {
+    let registry = registry.unwrap_or_else(|| "crates-io".to_string());
+    let token = match token {
+        Some(t) => t,
+        None => {
+            // Prompt without echoing.
+            let t = rpassword::prompt_password("Enter API token: ")?;
+            if t.trim().is_empty() {
+                anyhow::bail!("Empty token");
+            }
+            t.trim().to_string()
+        }
+    };
+    let path = crates_io::save_token(&token, &registry)?;
+    info!("Saved {} token to {}", registry, path.display());
+    Ok(())
+}
+
+fn cmd_logout(registry: Option<String>) -> Result<()> {
+    let registry = registry.unwrap_or_else(|| "crates-io".to_string());
+    if crates_io::clear_token(&registry)? {
+        info!("Removed {} token", registry);
+    } else {
+        info!("No stored token for {}", registry);
+    }
+    Ok(())
+}
+
+/// CARGO_PKG_* / CARGO_MANIFEST_DIR env vars cargo would normally provide,
+/// so `env!("CARGO_PKG_*")` works in Poly-built crates.
+fn manifest_env(target_id: &str, config: &poly_config::Config, first_source: &Path) -> Vec<(String, String)> {
+    let p = &config.project;
+    let mut v: Vec<(String, String)> = vec![
+        ("CARGO_PKG_NAME".into(), target_id.replace('-', "_")),
+        ("CARGO_PKG_VERSION".into(), p.version.clone()),
+        ("CARGO_MANIFEST_DIR".into(), first_source
+            .parent()
+            .map(|d| d.to_string_lossy().into_owned())
+            .unwrap_or_else(|| ".".into())),
+    ];
+    let parts: Vec<&str> = p.version.split('.').collect();
+    v.push(("CARGO_PKG_VERSION_MAJOR".into(), parts.first().unwrap_or(&"0").to_string()));
+    v.push(("CARGO_PKG_VERSION_MINOR".into(), parts.get(1).unwrap_or(&"0").to_string()));
+    v.push(("CARGO_PKG_VERSION_PATCH".into(), parts.get(2).unwrap_or(&"0").to_string()));
+    v.push(("CARGO_PKG_AUTHORS".into(), p.authors.join(":")));
+    v.push(("CARGO_PKG_DESCRIPTION".into(), p.description.clone().unwrap_or_default()));
+    v.push(("CARGO_PKG_HOMEPAGE".into(), p.homepage.clone().unwrap_or_default()));
+    v.push(("CARGO_PKG_REPOSITORY".into(), p.repository.clone().unwrap_or_default()));
+    v.push(("CARGO_PKG_LICENSE".into(), p.license.clone().unwrap_or_default()));
+    if let Some(r) = &p.readme {
+        v.push(("CARGO_PKG_README".into(), r.clone()));
+    }
+    v
+}
+
+/// Crate names of every Rust publish target — recorded as package
+/// dependencies so a meta install can pull the whole family.
+fn sibling_crates(config: &poly_config::Config) -> Vec<String> {
+    let specs = config
+        .publish
+        .as_ref()
+        .filter(|p| !p.targets.is_empty())
+        .map(|p| p.targets.clone())
+        .unwrap_or_else(|| config.build.default.targets.clone());
+    specs.iter()
+        .filter(|t| t.starts_with("rust:"))
+        .map(|t| crates_io::crate_name_for(config, t.trim_start_matches("rust:")))
+        .collect()
+}
+
+fn publish_targets(config: &poly_config::Config, publish: &poly_config::PublishConfig) -> Vec<String> {
+    if !publish.targets.is_empty() {
+        return publish.targets.clone();
+    }
+    config.build.default.targets.clone()
+}
+
+/// Upload a .vfsx.tar.zst package to a Poly registry endpoint.
+/// POST {registry}/api/v1/packages with metadata JSON + package bytes.
+async fn upload_package(
+    package: &Path,
+    name: &str,
+    version: &str,
+    registry: &str,
+    token_env: Option<&str>,
+) -> Result<()> {
+    let bytes = std::fs::read(package)?;
+    let url = format!("{}/api/v1/packages", registry.trim_end_matches('/'));
+
+    let mut req = reqwest::Client::new()
+        .post(&url)
+        .header("content-type", "application/octet-stream")
+        .header("x-poly-name", name)
+        .header("x-poly-version", version)
+        .body(bytes);
+
+    let token_var = token_env.unwrap_or("POLY_REGISTRY_TOKEN");
+    if let Ok(token) = std::env::var(token_var) {
+        req = req.bearer_auth(token);
+    }
+
+    let resp = req.send().await.context("Registry upload request failed")?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        anyhow::bail!("Registry rejected package: {} {}", status, body);
+    }
+    info!("Published {}@{} to {}", name, version, registry);
+    Ok(())
+}
+
+/// Read rust dependency versions pinned in an existing poly.lock.
+pub(crate) fn read_locked_rust_versions() -> HashMap<String, String> {
+    let mut locked = HashMap::new();
+    if let Ok(lock) = LockFile::read("poly.lock") {
+        for entry in lock.dependencies {
+            // Only trust entries that look like resolved semver versions
+            // (x.y.z). Older lockfiles stored requirements like "1.0".
+            if entry.language == "rust"
+                && entry.version.split('.').count() == 3
+                && entry.version.split('.').all(|p| p.chars().all(|c| c.is_ascii_digit()))
+            {
+                locked.insert(entry.name, entry.version);
+            }
+        }
+    }
+    locked
+}
+
+/// Default install root: ~/.local/share/poly, binaries to ~/.local/bin
+fn default_install_config() -> poly_package::InstallConfig {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    let home = PathBuf::from(home);
+    poly_package::InstallConfig {
+        install_dir: home.join(".local/share/poly"),
+        bin_dir: Some(home.join(".local/bin")),
+        verify_signatures: true,
+        public_key_path: ["pubkey.vfsx", "poly.pub"]
+            .iter()
+            .map(PathBuf::from)
+            .find(|p| p.exists()),
+    }
 }
 
 async fn cmd_install(package: String, local: Option<String>) -> Result<()> {
     info!("Installing package: {}", package);
 
-    let installer = poly_package::Installer::new(poly_package::InstallConfig {
-        install_dir: PathBuf::from(".poly"),
-        verify_signatures: true,
-        public_key_path: Some(PathBuf::from("poly.pub")),
-    });
+    let installer = poly_package::Installer::new(default_install_config());
 
     if let Some(local_path) = local {
         // Install from local file
-        installer.install(std::path::Path::new(&local_path)).await?;
+        installer.install(Path::new(&local_path)).await?;
     } else {
-        // Install from registry (not implemented yet)
-        info!("Installing from registry: {}", package);
-        info!("(Registry installation not yet implemented)");
+        let poly_registry = std::env::var("POLY_REGISTRY_URL")
+            .ok()
+            .or_else(|| {
+                parse_poly_ini("poly.ini")
+                    .ok()
+                    .and_then(|c| c.publish.and_then(|p| p.registry))
+            });
+
+        if let Some(registry) = poly_registry {
+            // Poly registry: download the package archive, then install.
+            let url = format!(
+                "{}/api/v1/packages/{}/latest",
+                registry.trim_end_matches('/'),
+                package
+            );
+            let mut req = reqwest::Client::new().get(&url);
+            if let Ok(token) = std::env::var("POLY_REGISTRY_TOKEN") {
+                req = req.bearer_auth(token);
+            }
+            let resp = req.send().await.context("Registry request failed")?;
+            if !resp.status().is_success() {
+                anyhow::bail!("Package not found in registry: {}", package);
+            }
+            let bytes = resp.bytes().await?;
+            let tmp = std::env::temp_dir().join(format!(
+                "poly-pkg-{}-{}.vfsx.tar.zst",
+                package, std::process::id()
+            ));
+            std::fs::write(&tmp, &bytes)?;
+            installer.install(&tmp).await?;
+            let _ = std::fs::remove_file(&tmp);
+        } else {
+            // crates.io: download the .crate (full sources + poly.ini +
+            // poly.lock), compile it with Poly, package, then install.
+            info!("Installing {} from crates.io (building from source)...", package);
+            let token = crates_io::resolve_crates_io_token();
+            let (crate_bytes, _version) =
+                crates_io::download_crate(&package, token.as_deref()).await?;
+            let extract_dir = std::env::temp_dir()
+                .join(format!("poly-crate-{}", std::process::id()));
+            let project_root = crates_io::extract_crate(&crate_bytes, &extract_dir)?;
+
+            let prev_dir = std::env::current_dir()?;
+            std::env::set_current_dir(&project_root)?;
+            let build_result = async {
+                cmd_build(None, false, None, true).await?;
+                let cfg = parse_poly_ini("poly.ini")?;
+                let pkg = create_combined_package(&cfg, "debug").await?;
+                Ok::<PathBuf, anyhow::Error>(pkg.canonicalize().unwrap_or(pkg))
+            }
+            .await;
+            let _ = std::env::set_current_dir(&prev_dir);
+
+            let pkg = build_result?;
+            installer.install(&pkg).await?;
+            let _ = std::fs::remove_dir_all(&extract_dir);
+        }
     }
 
     Ok(())
@@ -684,12 +1551,7 @@ async fn cmd_install(package: String, local: Option<String>) -> Result<()> {
 async fn cmd_uninstall(package: String) -> Result<()> {
     info!("Uninstalling package: {}", package);
 
-    let installer = poly_package::Installer::new(poly_package::InstallConfig {
-        install_dir: PathBuf::from(".poly"),
-        verify_signatures: true,
-        public_key_path: Some(PathBuf::from("poly.pub")),
-    });
-
+    let installer = poly_package::Installer::new(default_install_config());
     installer.uninstall(&package).await?;
 
     Ok(())

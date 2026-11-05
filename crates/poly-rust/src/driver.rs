@@ -22,6 +22,10 @@ pub struct RustTarget {
     pub dependencies: Vec<String>,
     pub source: PathBuf,
     pub flags: Vec<String>,
+    pub target_triple: Option<String>,
+    /// Extra environment variables for the rustc process
+    /// (CARGO_PKG_* manifest metadata, etc.)
+    pub env: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone)]
@@ -109,19 +113,32 @@ impl RustDriver {
         cmd.arg("--edition");
         cmd.arg(&target.edition);
 
+        // Target triple for cross-compilation
+        if let Some(target_triple) = &target.target_triple {
+            cmd.arg("--target");
+            cmd.arg(target_triple);
+        }
+
         // Features (as cfg flags)
         for feature in &target.features {
             cmd.arg("--cfg");
             cmd.arg(&format!("feature=\"{}\"", feature));
         }
 
-        // External dependencies
+        // External dependencies - use proper crate names from flags
+        // The flags already contain --extern crate_name=path
         for dep in dependencies {
             cmd.arg("--extern");
             let dep_name = dep.file_stem()
                 .and_then(|s| s.to_str())
-                .unwrap_or("unknown");
+                .unwrap_or("unknown")
+                .trim_start_matches("lib");
             cmd.arg(&format!("{}={}", dep_name, dep.display()));
+        }
+
+        // Manifest metadata env (CARGO_PKG_*, CARGO_MANIFEST_DIR, ...)
+        for (key, value) in &target.env {
+            cmd.env(key, value);
         }
 
         // Build script outputs (env vars and cfg flags)
@@ -135,7 +152,7 @@ impl RustDriver {
             }
         }
 
-        // Additional flags from target
+        // Additional flags from target (includes --extern for workspace deps)
         for flag in &target.flags {
             cmd.arg(flag);
         }
@@ -144,6 +161,28 @@ impl RustDriver {
         cmd.arg("-o");
         cmd.arg(output);
         cmd.arg(input);
+
+        // Windows-gnu targets need a mingw cross toolchain; rustc invokes
+        // `x86_64-w64-mingw32-gcc` by name, so make sure it is on PATH.
+        if target
+            .target_triple
+            .as_deref()
+            .map(|t| t.contains("windows"))
+            .unwrap_or(false)
+        {
+            if let Ok(home) = std::env::var("HOME") {
+                let mingw_bin = PathBuf::from(home).join(".local/mingw/usr/bin");
+                if mingw_bin.join("x86_64-w64-mingw32-gcc").exists() {
+                    let mut paths = vec![mingw_bin];
+                    if let Ok(path) = std::env::var("PATH") {
+                        paths.extend(std::env::split_paths(&path));
+                    }
+                    if let Ok(joined) = std::env::join_paths(paths) {
+                        cmd.env("PATH", joined);
+                    }
+                }
+            }
+        }
 
         debug!("Running: {:?}", cmd);
 

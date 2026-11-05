@@ -10,5 +10,5 @@
 pub mod parser;
 pub mod model;
 
-pub use model::{Config, Project, Target, Dependencies, BuildConfig};
+pub use model::{Config, Project, Target, Dependencies, BuildConfig, PublishConfig};
 pub use parser::parse_poly_ini;

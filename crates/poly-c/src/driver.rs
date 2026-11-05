@@ -7,10 +7,10 @@ use std::process::Command;
 use tracing::{debug, info};
 
 /// C/C++ compiler driver
+#[derive(Clone)]
 pub struct CDriver {
     compiler_path: PathBuf,
     compiler_type: CompilerType,
-    linker_path: PathBuf,
 }
 
 #[derive(Debug, Clone)]
@@ -33,6 +33,8 @@ pub struct CTarget {
     pub flags: Vec<String>,
     pub defines: HashMap<String, String>,
     pub dependencies: Vec<String>,
+    /// Rust-style target triple (e.g. x86_64-pc-windows-gnu)
+    pub target_triple: String,
 }
 
 #[derive(Debug, Clone)]
@@ -45,11 +47,9 @@ impl CDriver {
     /// Create a new C driver, auto-detecting the compiler
     pub fn new() -> Result<Self> {
         let (compiler_path, compiler_type) = Self::detect_compiler()?;
-        let linker_path = Self::find_linker(&compiler_type)?;
         Ok(Self {
             compiler_path,
             compiler_type,
-            linker_path,
         })
     }
 
@@ -76,16 +76,87 @@ impl CDriver {
         anyhow::bail!("No C compiler found (tried clang, gcc, cl)")
     }
 
-    fn find_linker(compiler_type: &CompilerType) -> Result<PathBuf> {
-        match compiler_type {
-            CompilerType::Gcc | CompilerType::Clang => {
-                // GCC and Clang use the same linker (ld)
-                Self::find_compiler("ld")
-            }
-            CompilerType::Msvc => {
-                Self::find_compiler("link")
+    /// Return a driver configured for the given target triple, selecting a
+    /// cross-compiler when the triple doesn't match the host.
+    pub fn for_target(&self, target_triple: &str) -> Result<Self> {
+        let prefix = Self::toolchain_prefix(target_triple);
+        let mut driver = self.clone();
+
+        if let Some(prefix) = prefix {
+            // Try well-known install locations, then PATH.
+            let candidates = [
+                format!("{}gcc", prefix),
+                format!("{}cc", prefix),
+                format!("{}clang", prefix),
+            ];
+            for name in candidates {
+                if let Ok(path) = Self::find_tool(&name) {
+                    driver.compiler_path = path;
+                    driver.compiler_type = CompilerType::Gcc;
+                    break;
+                }
             }
         }
+        Ok(driver)
+    }
+
+    /// Map a target triple to a toolchain prefix like `x86_64-w64-mingw32-`.
+    /// Returns None when the triple matches the host (no cross needed).
+    fn toolchain_prefix(target_triple: &str) -> Option<String> {
+        let host_is_windows = cfg!(windows);
+        let host_is_linux = cfg!(target_os = "linux");
+        let host_is_macos = cfg!(target_os = "macos");
+
+        if target_triple.contains("windows") && !host_is_windows {
+            let arch = if target_triple.starts_with("i686") || target_triple.starts_with("i586") {
+                "i686"
+            } else {
+                "x86_64"
+            };
+            return Some(format!("{}-w64-mingw32-", arch));
+        }
+        if target_triple.contains("linux") && !host_is_linux {
+            let arch = target_triple.split('-').next().unwrap_or("x86_64");
+            return Some(format!("{}-linux-gnu-", arch));
+        }
+        if (target_triple.contains("apple") || target_triple.contains("darwin"))
+            && !host_is_macos
+        {
+            let arch = target_triple.split('-').next().unwrap_or("aarch64");
+            return Some(format!("{}-apple-darwin", arch));
+        }
+        None
+    }
+
+    /// Find a build tool, checking ~/.local/mingw/usr/bin before PATH.
+    fn find_tool(name: &str) -> Result<PathBuf> {
+        let local_mingw = PathBuf::from(std::env::var("HOME").unwrap_or_default())
+            .join(".local/mingw/usr/bin")
+            .join(name);
+        if local_mingw.exists() {
+            return Ok(local_mingw);
+        }
+        Self::find_compiler(name)
+    }
+
+    /// Derive a sibling tool name from the compiler path
+    /// (`x86_64-w64-mingw32-gcc` -> `x86_64-w64-mingw32-ar`).
+    fn sibling_tool(&self, tool: &str) -> PathBuf {
+        let file = self
+            .compiler_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("gcc");
+        let prefix = file
+            .strip_suffix("gcc")
+            .or_else(|| file.strip_suffix("clang"))
+            .or_else(|| file.strip_suffix("cc"))
+            .unwrap_or("");
+        let candidate = format!("{}{}", prefix, tool);
+        if let Ok(path) = Self::find_tool(&candidate) {
+            return path;
+        }
+        PathBuf::from(tool)
     }
 
     fn find_compiler(name: &str) -> Result<PathBuf> {
@@ -216,7 +287,9 @@ impl CDriver {
     pub fn link(&self, target: &CTarget, objects: &[PathBuf], output: &Path) -> Result<LinkResult> {
         debug!("Linking target: {}", target.name);
 
-        let mut cmd = Command::new(&self.linker_path);
+        // Link through the compiler driver (gcc/clang handle crt objects,
+        // library paths and the correct linker for the target).
+        let mut cmd = Command::new(&self.compiler_path);
 
         // Target type determines linking mode
         match target.target_type.as_str() {
@@ -302,7 +375,7 @@ impl CDriver {
     fn create_static_lib(&self, objects: &[PathBuf], output: &Path) -> Result<LinkResult> {
         debug!("Creating static library: {:?}", output);
 
-        let mut cmd = Command::new("ar");
+        let mut cmd = Command::new(self.sibling_tool("ar"));
         cmd.arg("rcs");
         cmd.arg(output);
 

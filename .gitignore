@@ -1,1 +1,5 @@
 /target
+/dist
+poly.ini
+poly.lock
+Cargo.lock

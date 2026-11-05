@@ -29,6 +29,17 @@ pub struct Project {
     pub name: String,
     pub version: String,
     pub edition: Option<String>,
+    // crates.io / registry publish metadata (all optional)
+    pub description: Option<String>,
+    pub license: Option<String>,
+    pub license_file: Option<String>,
+    pub homepage: Option<String>,
+    pub documentation: Option<String>,
+    pub repository: Option<String>,
+    pub readme: Option<String>,
+    pub keywords: Vec<String>,
+    pub categories: Vec<String>,
+    pub authors: Vec<String>,
 }
 
 /// Workspace configuration
@@ -60,6 +71,7 @@ pub struct Dependencies {
     pub rust: HashMap<String, String>,
     pub c: HashMap<String, String>,
     pub go: HashMap<String, String>,
+    pub workspace: HashMap<String, HashMap<String, String>>,
 }
 
 /// Build configuration
@@ -84,6 +96,12 @@ pub struct PublishConfig {
     pub targets: Vec<String>,
     pub platforms: Vec<String>,
     pub include_docs: bool,
+    /// Registry base URL (e.g. https://registry.example.com). None = local only.
+    pub registry: Option<String>,
+    /// Env var holding the registry auth token.
+    pub token_env: Option<String>,
+    /// Override the crates.io crate name. None = auto-generated stub name.
+    pub crate_name: Option<String>,
 }
 
 /// VFSX signing configuration

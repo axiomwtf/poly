@@ -6,5 +6,5 @@
 pub mod client;
 pub mod resolver;
 
-pub use client::RegistryClient;
+pub use client::{CrateDependency, RegistryClient};
 pub use resolver::{RegistryResolver, ResolvedDependency};

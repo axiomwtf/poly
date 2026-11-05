@@ -10,10 +10,12 @@ pub mod cache;
 pub mod dependency_compiler;
 pub mod dependency_downloader;
 pub mod graph;
+pub mod source_analyzer;
 pub mod task;
 
 pub use cache::Cache;
 pub use dependency_compiler::{CompiledDependency, DependencyCompiler};
 pub use dependency_downloader::{DependencyDownloader, DownloadedDependency};
 pub use graph::BuildGraph;
+pub use source_analyzer::DependencyAnalyzer;
 pub use task::{Task, TaskType, Language};
