@@ -1,9 +1,4 @@
 [lock]
 version = 1
-generated = 2026-11-05T17:14:24.435496553+00:00
-
-[dependency.rust.anyhow]
-version = 1.0
-checksum = sha256:0000000000000000000000000000000000000000000000000000000000000000
-source = https://crates.io
+generated = 2026-11-05T17:20:39.126310386+00:00
 
