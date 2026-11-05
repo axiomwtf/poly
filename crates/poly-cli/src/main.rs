@@ -29,6 +29,8 @@ enum Commands {
         target: Option<String>,
         #[arg(short, long)]
         release: bool,
+        #[arg(short, long)]
+        config: Option<String>,
     },
     /// Add a dependency
     Add {
@@ -44,7 +46,10 @@ enum Commands {
         all: bool,
     },
     /// Generate lock file
-    Lock,
+    Lock {
+        #[arg(short, long)]
+        config: Option<String>,
+    },
     /// Clean build artifacts
     Clean,
     /// Validate configuration
@@ -60,11 +65,11 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Commands::Init { name } => cmd_init(name),
-        Commands::Build { target, release } => cmd_build(target, release).await,
+        Commands::Build { target, release, config } => cmd_build(target, release, config).await,
         Commands::Add { dependency } => cmd_add(dependency),
         Commands::Remove { dependency } => cmd_remove(dependency),
         Commands::Update { all } => cmd_update(all),
-        Commands::Lock => cmd_lock(),
+        Commands::Lock { config } => cmd_lock(config),
         Commands::Clean => cmd_clean(),
         Commands::Validate => cmd_validate(),
     }
@@ -114,11 +119,12 @@ targets = rust:lib
     Ok(())
 }
 
-async fn cmd_build(_target: Option<String>, _release: bool) -> Result<()> {
+async fn cmd_build(_target: Option<String>, _release: bool, config_path: Option<String>) -> Result<()> {
     info!("Building project");
 
     // Load configuration
-    let config = parse_poly_ini("poly.ini")?;
+    let config_file = config_path.unwrap_or_else(|| "poly.ini".to_string());
+    let config = parse_poly_ini(&config_file)?;
     debug!("Loaded config for project: {}", config.project.name);
 
     // Resolve dependencies
@@ -411,10 +417,11 @@ fn cmd_update(all: bool) -> Result<()> {
     Ok(())
 }
 
-fn cmd_lock() -> Result<()> {
+fn cmd_lock(config_path: Option<String>) -> Result<()> {
     info!("Generating lock file");
 
-    let config = parse_poly_ini("poly.ini")?;
+    let config_file = config_path.unwrap_or_else(|| "poly.ini".to_string());
+    let config = parse_poly_ini(&config_file)?;
 
     let resolver = DependencyResolver::new();
     let entries = resolver.resolve(

@@ -165,11 +165,13 @@ Poly is organized as a Cargo workspace with the following crates:
 - Simple task graph execution
 - Basic cache
 
-### Phase 2: Language support
+### Phase 2: Language support ✅
 - Full Rust driver (features, cfg, build scripts)
 - Full C/C++ driver (header scanning, linking)
 - Full Go driver (modules, CGO)
 - Unified linker orchestration
+
+**Note:** External dependency resolution is currently limited. Poly can compile projects without external dependencies, but cannot yet download or compile crates.io dependencies. This will be addressed in Phase 3 with the registry client.
 
 ### Phase 3: Integrations and packaging
 - VFSX signing and verification
