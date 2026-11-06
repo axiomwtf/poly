@@ -173,6 +173,10 @@ struct ResolveState {
     requested: HashMap<PackageId, BTreeSet<String>>,
     expanded: HashMap<PackageId, BTreeSet<String>>,
     pending: VecDeque<(PackageId, String)>,
+    /// Weak `dep?/feature` requests whose optional dependency was not yet
+    /// activated when the feature expanded. Drained when the dep resolves;
+    /// dropped at convergence if it never does (correct `?` semantics).
+    weak_pending: Vec<(PackageId, String, String)>,
     /// Versions pinned by poly.lock (name -> exact version).
     locked: HashMap<String, String>,
 }
@@ -648,6 +652,11 @@ impl DependencyCompiler {
             if weak {
                 if let Some(child) = self.resolved_dependency(state, id, dep_name) {
                     request_feature(state, child, feature_name);
+                } else {
+                    // Optional dep not activated yet — defer until it is.
+                    state
+                        .weak_pending
+                        .push((id.clone(), dep_name.to_string(), feature_name.to_string()));
                 }
             } else {
                 if let Some(child) = self.activate_dependency(state, id, dep_name, target_triple).await? {
@@ -708,6 +717,8 @@ impl DependencyCompiler {
         {
             slot.resolved = Some(child.clone());
         }
+
+        drain_weak_features(state, id, &raw, &child);
 
         Ok(Some(child))
     }
@@ -1730,6 +1741,26 @@ fn seed_edge_features(state: &mut ResolveState, child: PackageId, raw: &RawDep) 
     }
     if raw.default_features {
         request_feature(state, child, "default");
+    }
+}
+
+/// Flush deferred `dep?/feature` requests once `raw`'s optional dependency
+/// has been activated and resolved to `child`.
+fn drain_weak_features(state: &mut ResolveState, parent: &PackageId, raw: &RawDep, child: &PackageId) {
+    let matched: Vec<String> = state
+        .weak_pending
+        .iter()
+        .filter(|(p, dep, _)| p == parent && raw_dep_name_matches(raw, dep))
+        .map(|(_, _, f)| f.clone())
+        .collect();
+    if matched.is_empty() {
+        return;
+    }
+    state
+        .weak_pending
+        .retain(|(p, dep, _)| !(p == parent && raw_dep_name_matches(raw, dep)));
+    for feature in matched {
+        request_feature(state, child.clone(), &feature);
     }
 }
 

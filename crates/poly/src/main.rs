@@ -2,6 +2,7 @@
 
 mod crates_io;
 mod extras;
+mod migrate;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -826,7 +827,7 @@ fn topo_sort(
 /// Pick the crate root from expanded sources: `lib.rs` for library targets,
 /// `main.rs` for binaries, first source otherwise. rustc compiles a single
 /// root file; sibling files are modules reached through `mod` declarations.
-fn pick_rust_root(sources: &[PathBuf], type_: &str) -> PathBuf {
+pub(crate) fn pick_rust_root(sources: &[PathBuf], type_: &str) -> PathBuf {
     let preferred = if type_ == "bin" { "main.rs" } else { "lib.rs" };
     sources
         .iter()

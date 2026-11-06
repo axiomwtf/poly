@@ -337,67 +337,137 @@ pub async fn cmd_lint(target: Option<String>) -> Result<()> {
 async fn lint_rust(
     target_id: &str,
     tc: &poly_config::Target,
-    config: &poly_config::Config,
+    _config: &poly_config::Config,
 ) -> Result<usize> {
+    let _ = target_id;
     let sources = expand_globs(&tc.sources)?;
-    if sources.is_empty() {
-        return Ok(0);
-    }
-
-    // Prefer clippy-driver; fall back to rustc --emit=metadata.
-    let clippy = which_tool("clippy-driver").or_else(|| which_tool("cargo-clippy"));
-    let linter = clippy.unwrap_or_else(|| "rustc".to_string());
-
-    let dep_compiler = poly_core::DependencyCompiler::new(
-        poly_core::project_cache_dir(&config.project.name).join("debug"),
-    )?;
-    let workspace_dir = std::env::current_dir()?;
-    let locked = crate::read_locked_rust_versions();
-    let compiled_deps = dep_compiler
-        .compile_dependencies(
-            &config.dependencies.rust,
-            &workspace_dir,
-            "x86_64-unknown-linux-gnu",
-            "debug",
-            &locked,
-        )
-        .await?;
-    let dep_args = rust_dep_args(
-        target_id,
-        tc,
-        config,
-        &compiled_deps,
-        &HashMap::new(),
-        "x86_64-unknown-linux-gnu",
-    );
-
     let mut issues = 0usize;
     for src in &sources {
-        let mut cmd = Command::new(&linter);
-        cmd.arg(src)
-            .arg("--crate-type")
-            .arg("lib")
-            .arg("--edition")
-            .arg(tc.edition.clone().unwrap_or_else(|| "2021".into()))
-            .arg("-A")
-            .arg("non_snake_case")
-            .arg("--emit=metadata")
-            .arg("-o")
-            .arg("/dev/null");
-        for a in &dep_args {
-            cmd.arg(a);
+        if src.extension().and_then(|e| e.to_str()) != Some("rs") {
+            continue;
         }
-        let out = cmd.output()?;
-        if !out.status.success() {
-            issues += String::from_utf8_lossy(&out.stderr)
-                .lines()
-                .filter(|l| l.contains("warning") || l.contains("error"))
-                .count()
-                .max(1);
-            eprint!("{}", String::from_utf8_lossy(&out.stderr));
-        }
+        let Ok(content) = std::fs::read_to_string(src) else {
+            continue;
+        };
+        issues += lint_rust_naming(src, &content);
     }
     Ok(issues)
+}
+
+/// Poly-native naming lint (polyspec §5.3/§10.2): every identifier in the
+/// project's own sources must be camelCase — starts with a lowercase letter,
+/// no underscores or hyphens. Dependency crates are never scanned; only the
+/// target's own `sources` globs are.
+fn lint_rust_naming(path: &Path, content: &str) -> usize {
+    use regex::Regex;
+    use std::sync::OnceLock;
+
+    static DECL_RE: OnceLock<Regex> = OnceLock::new();
+    static FIELD_RE: OnceLock<Regex> = OnceLock::new();
+    static MACRO_RE: OnceLock<Regex> = OnceLock::new();
+    static FN_RE: OnceLock<Regex> = OnceLock::new();
+    static FOR_RE: OnceLock<Regex> = OnceLock::new();
+
+    let decl_re = DECL_RE.get_or_init(|| {
+        Regex::new(
+            r"\b(fn|struct|enum|trait|union|type|const|static|mod|let)\s+(?:mut\s+|ref\s+|async\s+|unsafe\s+|extern\s+|fn\s+)*([A-Za-z_][A-Za-z0-9_]*)",
+        )
+        .unwrap()
+    });
+    let field_re = FIELD_RE.get_or_init(|| {
+        Regex::new(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:mut\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*:").unwrap()
+    });
+    let macro_re = MACRO_RE.get_or_init(|| {
+        Regex::new(r"\bmacro_rules!\s*([A-Za-z_][A-Za-z0-9_]*)").unwrap()
+    });
+    let fn_re = FN_RE.get_or_init(|| {
+        Regex::new(r"\bfn\s+[A-Za-z_][A-Za-z0-9_]*\s*(?:<[^>]*>)?\s*\(([^)]*)\)").unwrap()
+    });
+    let for_re = FOR_RE.get_or_init(|| {
+        Regex::new(r"\bfor\s+(?:mut\s+|ref\s+)*([A-Za-z_][A-Za-z0-9_]*)\s+in\b").unwrap()
+    });
+
+    let mut issues = 0usize;
+    for (lineno, line) in content.lines().enumerate() {
+        let line = match line.find("//") {
+            Some(i) => &line[..i],
+            None => line,
+        };
+        let check = |name: &str, kind: &str| {
+            let name = name.strip_prefix("r#").unwrap_or(name);
+            if name == "_" || is_camel_case(name) {
+                return 0usize;
+            }
+            eprintln!(
+                "{}:{}: warning: {} `{}` is not camelCase",
+                path.display(),
+                lineno + 1,
+                kind,
+                name
+            );
+            1usize
+        };
+        for caps in decl_re.captures_iter(line) {
+            let keyword = &caps[1];
+            let name = &caps[2];
+            // `let`/`for`-style bindings only count when followed by `=`/`:` —
+            // `let Some(x)`, `let Foo { .. }`, `let Enum::Variant` are patterns.
+            if keyword == "let" {
+                let after = line[caps.get(0).unwrap().end()..].trim_start();
+                if !(after.starts_with('=') || after.starts_with(':')) {
+                    continue;
+                }
+            }
+            issues += check(name, "identifier");
+        }
+        for caps in for_re.captures_iter(line) {
+            issues += check(&caps[1], "identifier");
+        }
+        for caps in macro_re.captures_iter(line) {
+            issues += check(&caps[1], "macro");
+        }
+        // Function parameters: first ident of each comma-separated param.
+        // Only simple `name` / `name: Type` params — destructured patterns
+        // like `(a, b): (i32, i32)` are skipped.
+        for caps in fn_re.captures_iter(line) {
+            for param in caps[1].split(',') {
+                let mut p = param.trim_start();
+                for prefix in ["mut ", "ref ", "&mut ", "&"] {
+                    if let Some(rest) = p.strip_prefix(prefix) {
+                        p = rest.trim_start();
+                    }
+                }
+                let ident: String = p
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                    .collect();
+                if ident.is_empty() || ident == "self" {
+                    continue;
+                }
+                let rest = p[ident.len()..].trim_start();
+                if !(rest.starts_with(':') || rest.is_empty()) {
+                    continue;
+                }
+                issues += check(&ident, "parameter");
+            }
+        }
+        // Line-leading `name:` covers struct fields and struct-literal keys.
+        if let Some(caps) = field_re.captures(line) {
+            issues += check(&caps[1], "field");
+        }
+    }
+    issues
+}
+
+/// camelCase per polyspec §5.3: starts with a lowercase letter, then only
+/// letters and digits — no underscores, hyphens, or leading capitals.
+fn is_camel_case(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_lowercase() => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_alphanumeric())
 }
 
 fn lint_c(target_id: &str, tc: &poly_config::Target) -> Result<usize> {
@@ -735,168 +805,7 @@ ENTRYPOINT ["/dist"]
 }
 
 pub fn cmd_migrate(from: &str) -> Result<()> {
-    match from {
-        "cargo" => migrate_cargo(),
-        "go-mod" | "gomod" => migrate_go_mod(),
-        "cmake" => migrate_cmake(),
-        other => anyhow::bail!("Unknown source: {} (cargo|go-mod|cmake)", other),
-    }
-}
-
-fn migrate_cargo() -> Result<()> {
-    let toml_path = PathBuf::from("Cargo.toml");
-    if !toml_path.exists() {
-        anyhow::bail!("No Cargo.toml found");
-    }
-    let content = std::fs::read_to_string(&toml_path)?;
-    let mut ini = String::from("[project]\nname = poly-migrated\nversion = 0.1.0\nedition = 2021\n\n[dependencies.rust]\n");
-    let mut in_deps = false;
-    let mut report = String::new();
-    for line in content.lines() {
-        let t = line.trim();
-        if t.starts_with('[') {
-            in_deps = t == "[dependencies]" || t.starts_with("[dependencies.");
-            continue;
-        }
-        if in_deps {
-            if let Some((name, spec)) = t.split_once('=') {
-                let name = name.trim();
-                if name.is_empty() || name.starts_with('#') {
-                    continue;
-                }
-                let spec = spec.trim().trim_matches('"');
-                // Extract version req and features from inline table or string
-                let (version, features) = if spec.starts_with('{') {
-                    let v = extract_toml_str(spec, "version").unwrap_or_else(|| "*".into());
-                    let f = extract_toml_str(spec, "features");
-                    (v, f)
-                } else {
-                    (spec.to_string(), None)
-                };
-                let feat_suffix = features
-                    .map(|f| format!("|{}", f.replace(['[', ']', '"', ' '], "")))
-                    .unwrap_or_default();
-                ini.push_str(&format!("{} = {}{}\n", name, version, feat_suffix));
-                report.push_str(&format!("migrated rust dep: {} = {}\n", name, version));
-            }
-        }
-    }
-    ini.push_str("\n[build.default]\ntargets =\n");
-    // Backup existing poly.ini
-    let poly_ini = PathBuf::from("poly.ini");
-    if poly_ini.exists() {
-        std::fs::copy(&poly_ini, "poly.ini.bak")?;
-    }
-    std::fs::write(&poly_ini, ini)?;
-    std::fs::write("migration-report.txt", report)?;
-    info!("Migrated Cargo.toml -> poly.ini (report: migration-report.txt)");
-    Ok(())
-}
-
-fn migrate_go_mod() -> Result<()> {
-    let gomod = PathBuf::from("go.mod");
-    if !gomod.exists() {
-        anyhow::bail!("No go.mod found");
-    }
-    let content = std::fs::read_to_string(&gomod)?;
-    let mut ini = String::from("[project]\nname = poly-migrated\nversion = 0.1.0\nedition = 2021\n\n[dependencies.go]\n");
-    let mut report = String::new();
-    let mut in_require = false;
-    for line in content.lines() {
-        let t = line.trim();
-        if t == "require (" {
-            in_require = true;
-            continue;
-        }
-        if in_require && t == ")" {
-            in_require = false;
-            continue;
-        }
-        if t.starts_with("require ") {
-            let rest = t.trim_start_matches("require ").trim();
-            write_go_dep(&mut ini, &mut report, rest);
-            continue;
-        }
-        if in_require {
-            write_go_dep(&mut ini, &mut report, t);
-        }
-    }
-    if !PathBuf::from("poly.ini").exists() {
-        std::fs::write("poly.ini", ini)?;
-    } else {
-        // Append go deps section if missing
-        let existing = std::fs::read_to_string("poly.ini")?;
-        if !existing.contains("[dependencies.go]") {
-            std::fs::write("poly.ini", format!("{}\n{}", existing, ini))?;
-        }
-    }
-    std::fs::write("migration-report.txt", report)?;
-    info!("Migrated go.mod -> poly.ini (report: migration-report.txt)");
-    Ok(())
-}
-
-fn write_go_dep(ini: &mut String, report: &mut String, line: &str) {
-    let parts: Vec<&str> = line.split_whitespace().collect();
-    if parts.len() >= 2 {
-        ini.push_str(&format!("{} = {}\n", parts[0], parts[1]));
-        report.push_str(&format!("migrated go dep: {} = {}\n", parts[0], parts[1]));
-    }
-}
-
-fn migrate_cmake() -> Result<()> {
-    let cmake = PathBuf::from("CMakeLists.txt");
-    if !cmake.exists() {
-        anyhow::bail!("No CMakeLists.txt found");
-    }
-    let content = std::fs::read_to_string(&cmake)?;
-    let mut ini = String::from("[project]\nname = poly-migrated\nversion = 0.1.0\nedition = 2021\n\n");
-    let mut report = String::new();
-    for line in content.lines() {
-        let t = line.trim();
-        for (func, ty) in [("add_executable", "bin"), ("add_library", "static-lib")] {
-            if t.starts_with(func) {
-                // add_executable(name src1 src2 ...) or add_library(name STATIC src...)
-                let inner = t
-                    .trim_start_matches(func)
-                    .trim_start_matches('(')
-                    .trim_end_matches(')')
-                    .trim();
-                let tokens: Vec<&str> = inner.split_whitespace().collect();
-                if let Some(name) = tokens.first() {
-                    let srcs: Vec<&str> = tokens
-                        .iter()
-                        .skip(if ty == "static-lib" { 2 } else { 1 })
-                        .filter(|s| s.ends_with(".c") || s.ends_with(".cpp"))
-                        .cloned()
-                        .collect();
-                    if !srcs.is_empty() {
-                        ini.push_str(&format!(
-                            "[target.{}]\nlanguage = c\ntype = {}\nsources = {}\n\n",
-                            name,
-                            ty,
-                            srcs.join(", ")
-                        ));
-                        report.push_str(&format!("migrated cmake target: {} ({})\n", name, ty));
-                    }
-                }
-            }
-        }
-    }
-    ini.push_str("[build.default]\ntargets =\n");
-    if PathBuf::from("poly.ini").exists() {
-        std::fs::copy("poly.ini", "poly.ini.bak")?;
-    }
-    std::fs::write("poly.ini", ini)?;
-    std::fs::write("migration-report.txt", report)?;
-    info!("Migrated CMakeLists.txt -> poly.ini (report: migration-report.txt)");
-    Ok(())
-}
-
-fn extract_toml_str(table: &str, key: &str) -> Option<String> {
-    let pat = format!("{} = \"", key);
-    let start = table.find(&pat)? + pat.len();
-    let end = table[start..].find('"')? + start;
-    Some(table[start..end].to_string())
+    crate::migrate::migrate(from)
 }
 
 pub fn cmd_completion(shell: &str) -> Result<()> {

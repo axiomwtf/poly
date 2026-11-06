@@ -1,4 +1,10 @@
-//! Go compiler driver (direct go tool invocation)
+//! Go compiler driver.
+//!
+//! Delegation boundary (polyspec §7.3): pure-Go packages build through
+//! `go tool compile`/`go tool link` directly (`compile_native`). The `go`
+//! command is invoked only where no tool-level equivalent exists — `go list`
+//! for dependency export data, `go build` for cgo/module-mode builds,
+//! `go test`/`go vet` for test and lint.
 
 use anyhow::{Context, Result};
 use std::collections::HashMap;
