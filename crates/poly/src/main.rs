@@ -76,17 +76,6 @@ enum Commands {
         #[arg(short, long)]
         package: Option<String>,
     },
-    /// Publish to registry
-    Publish {
-        #[arg(short, long)]
-        config: Option<String>,
-    },
-    /// Install a package
-    Install {
-        package: String,
-        #[arg(long)]
-        local: Option<String>,
-    },
     /// Uninstall a package
     Uninstall {
         package: String,
@@ -173,7 +162,7 @@ enum Commands {
     Ide {
         kind: String,
     },
-    /// Tag, build and publish a release
+    /// Build a release
     Release {
         #[arg(long)]
         dry_run: bool,
@@ -241,8 +230,6 @@ async fn main() -> Result<()> {
         Commands::Validate => cmd_validate(),
         Commands::Sign { keyfile } => cmd_sign(keyfile),
         Commands::Verify { package } => cmd_verify(package),
-        Commands::Publish { config } => cmd_publish(config).await,
-        Commands::Install { package, local } => cmd_install(package, local).await,
         Commands::Uninstall { package } => cmd_uninstall(package).await,
         Commands::Test { target, coverage, benchmark } => {
             extras::cmd_test(target, coverage, benchmark).await
@@ -612,7 +599,14 @@ async fn cmd_build(target: Option<String>, release: bool, config_path: Option<St
     // Create the combined installable package unless --no-package
     if !no_package && !all_binaries.is_empty() {
         match create_combined_package(&config, profile).await {
-            Ok(pkg) => info!("Created package: {}", pkg.display()),
+            Ok(pkg) => {
+                info!("Created package: {}", pkg.display());
+                // The merged archive is the deliverable — drop the per-profile
+                // build tree so dist/ only holds the package.
+                if let Err(e) = std::fs::remove_dir_all(&output_dir) {
+                    warn!("Failed to remove {}: {}", output_dir.display(), e);
+                }
+            }
             Err(e) => warn!("Packaging failed: {}", e),
         }
     }
@@ -644,6 +638,9 @@ async fn cmd_build(target: Option<String>, release: bool, config_path: Option<St
 /// project cache (`~/.cache/poly/{project}/{profile}/deps`), so any legacy
 /// `dist/{profile}/deps` directory is removed as well.
 fn clean_build_intermediates(output_dir: &Path) -> Result<()> {
+    if !output_dir.is_dir() {
+        return Ok(());
+    }
     let legacy_deps = output_dir.join("deps");
     if legacy_deps.is_dir() {
         std::fs::remove_dir_all(&legacy_deps)?;
@@ -1531,101 +1528,6 @@ fn cmd_verify(package: Option<String>) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_publish(config_path: Option<String>) -> Result<()> {
-    info!("Publishing package");
-
-    let config_file = config_path.unwrap_or_else(|| "poly.ini".to_string());
-    let config = parse_poly_ini(&config_file)?;
-
-    // Check if publish config exists
-    let publish_config = config
-        .publish
-        .clone()
-        .context("No [publish] section found in poly.ini")?;
-
-    // Publish packages the release build by default; fall back to debug.
-    let profile = if PathBuf::from("dist/release").is_dir() {
-        "release"
-    } else {
-        "debug"
-    };
-
-    let package_config = poly_package::PackageConfig {
-        name: config.project.name.clone(),
-        version: config.project.version.clone(),
-        description: None,
-        authors: Vec::new(),
-        license: "MPL-2.0".to_string(),
-        platforms: publish_config.platforms.clone(),
-        include_docs: publish_config.include_docs,
-        compression: "zstd".to_string(),
-        dependencies: sibling_crates(&config),
-    };
-
-    let packager = poly_package::Packager::new(
-        package_config,
-        PathBuf::from("."),
-        PathBuf::from("dist"),
-        profile.to_string(),
-    );
-
-    let package = packager.create_package().await?;
-
-    info!("Created package: {}", package.display());
-
-    // Publish each Rust target to crates.io as a .crate archive.
-    // The .crate contains poly.ini/poly.lock + sources + a stub Cargo.toml;
-    // poly.ini remains the source of truth for the actual build.
-    let rust_targets: Vec<String> = publish_targets(&config, &publish_config)
-        .into_iter()
-        .filter(|t| t.starts_with("rust:"))
-        .collect();
-
-    if !rust_targets.is_empty() {
-        let token = crates_io::resolve_crates_io_token().context(
-            "crates.io publish requires a token: run `poly login` or set CARGO_REGISTRY_TOKEN",
-        )?;
-        let project_root = std::env::current_dir()?;
-        let mut failures = Vec::new();
-        for target in &rust_targets {
-            let target_id = target.trim_start_matches("rust:");
-            match crates_io::publish_to_crates_io(
-                &config,
-                target_id,
-                &project_root,
-                &token,
-            )
-            .await
-            {
-                Ok(()) => {}
-                Err(e) => {
-                    let msg = format!("{}", e);
-                    if msg.contains("already uploaded") {
-                        info!("{} already published, skipping", crates_io::crate_name_for(&config, target_id));
-                    } else {
-                        warn!("Publish failed for {}: {}", target_id, msg);
-                        failures.push(format!("{}: {}", target_id, msg));
-                    }
-                }
-            }
-        }
-        if !failures.is_empty() {
-            anyhow::bail!("{} crate(s) failed to publish:\n{}", failures.len(), failures.join("\n"));
-        }
-    }
-
-    // Upload the vfsx package to a custom registry when configured.
-    if let Some(registry) = &publish_config.registry {
-        upload_package(&package, &config.project.name, &config.project.version, registry, publish_config.token_env.as_deref()).await?;
-    } else if rust_targets.is_empty() {
-        info!("Package ready for publishing (no [publish] registry configured)");
-    }
-
-    Ok(())
-}
-
-/// Resolve which `lang:target` specs `poly publish` should act on.
-/// Uses [publish] targets, falling back to [build.default] targets.
 fn cmd_login(registry: Option<String>, token: Option<String>) -> Result<()> {
     let registry = registry.unwrap_or_else(|| "crates-io".to_string());
     let token = match token {
@@ -1696,46 +1598,6 @@ fn sibling_crates(config: &poly_config::Config) -> Vec<String> {
         .collect()
 }
 
-fn publish_targets(config: &poly_config::Config, publish: &poly_config::PublishConfig) -> Vec<String> {
-    if !publish.targets.is_empty() {
-        return publish.targets.clone();
-    }
-    config.build.default.targets.clone()
-}
-
-/// Upload a .vfsx.tar.zst package to a Poly registry endpoint.
-/// POST {registry}/api/v1/packages with metadata JSON + package bytes.
-async fn upload_package(
-    package: &Path,
-    name: &str,
-    version: &str,
-    registry: &str,
-    token_env: Option<&str>,
-) -> Result<()> {
-    let bytes = std::fs::read(package)?;
-    let url = format!("{}/api/v1/packages", registry.trim_end_matches('/'));
-
-    let mut req = reqwest::Client::new()
-        .post(&url)
-        .header("content-type", "application/octet-stream")
-        .header("x-poly-name", name)
-        .header("x-poly-version", version)
-        .body(bytes);
-
-    let token_var = token_env.unwrap_or("POLY_REGISTRY_TOKEN");
-    if let Ok(token) = std::env::var(token_var) {
-        req = req.bearer_auth(token);
-    }
-
-    let resp = req.send().await.context("Registry upload request failed")?;
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        anyhow::bail!("Registry rejected package: {} {}", status, body);
-    }
-    info!("Published {}@{} to {}", name, version, registry);
-    Ok(())
-}
 
 /// Read rust dependency versions pinned in an existing poly.lock.
 pub(crate) fn read_locked_rust_versions() -> HashMap<String, String> {
@@ -1770,76 +1632,6 @@ fn default_install_config() -> poly_package::InstallConfig {
     }
 }
 
-async fn cmd_install(package: String, local: Option<String>) -> Result<()> {
-    info!("Installing package: {}", package);
-
-    let installer = poly_package::Installer::new(default_install_config());
-
-    if let Some(local_path) = local {
-        // Install from local file
-        installer.install(Path::new(&local_path)).await?;
-    } else {
-        let poly_registry = std::env::var("POLY_REGISTRY_URL")
-            .ok()
-            .or_else(|| {
-                parse_poly_ini("poly.ini")
-                    .ok()
-                    .and_then(|c| c.publish.and_then(|p| p.registry))
-            });
-
-        if let Some(registry) = poly_registry {
-            // Poly registry: download the package archive, then install.
-            let url = format!(
-                "{}/api/v1/packages/{}/latest",
-                registry.trim_end_matches('/'),
-                package
-            );
-            let mut req = reqwest::Client::new().get(&url);
-            if let Ok(token) = std::env::var("POLY_REGISTRY_TOKEN") {
-                req = req.bearer_auth(token);
-            }
-            let resp = req.send().await.context("Registry request failed")?;
-            if !resp.status().is_success() {
-                anyhow::bail!("Package not found in registry: {}", package);
-            }
-            let bytes = resp.bytes().await?;
-            let tmp = std::env::temp_dir().join(format!(
-                "poly-pkg-{}-{}.vfsx.tar.zst",
-                package, std::process::id()
-            ));
-            std::fs::write(&tmp, &bytes)?;
-            installer.install(&tmp).await?;
-            let _ = std::fs::remove_file(&tmp);
-        } else {
-            // crates.io: download the .crate (full sources + poly.ini +
-            // poly.lock), compile it with Poly, package, then install.
-            info!("Installing {} from crates.io (building from source)...", package);
-            let token = crates_io::resolve_crates_io_token();
-            let (crate_bytes, _version) =
-                crates_io::download_crate(&package, token.as_deref()).await?;
-            let extract_dir = std::env::temp_dir()
-                .join(format!("poly-crate-{}", std::process::id()));
-            let project_root = crates_io::extract_crate(&crate_bytes, &extract_dir)?;
-
-            let prev_dir = std::env::current_dir()?;
-            std::env::set_current_dir(&project_root)?;
-            let build_result = async {
-                cmd_build(None, false, None, true).await?;
-                let cfg = parse_poly_ini("poly.ini")?;
-                let pkg = create_combined_package(&cfg, "debug").await?;
-                Ok::<PathBuf, anyhow::Error>(pkg.canonicalize().unwrap_or(pkg))
-            }
-            .await;
-            let _ = std::env::set_current_dir(&prev_dir);
-
-            let pkg = build_result?;
-            installer.install(&pkg).await?;
-            let _ = std::fs::remove_dir_all(&extract_dir);
-        }
-    }
-
-    Ok(())
-}
 
 async fn cmd_uninstall(package: String) -> Result<()> {
     info!("Uninstalling package: {}", package);

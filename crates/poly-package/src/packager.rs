@@ -1,7 +1,7 @@
 //! Package packager for creating distributable archives
 //!
 //! Per spec §8.1 a package is ONE VFSX archive named
-//! `{name}-{version}.vfsx.tar.zst` containing:
+//! `{name}-{version}-{profile}.vfsx.tar.zst` containing:
 //!   bin/<platform-slug>/<executables>   (one dir per platform)
 //!   src/                                (when include_docs = true)
 //!   poly.lock
@@ -151,8 +151,8 @@ impl Packager {
 
         // Single VFSX archive for all platforms (spec §8.1)
         let archive_path = self.dist_dir.join(format!(
-            "{}-{}.vfsx.tar.zst",
-            self.config.name, self.config.version
+            "{}-{}-{}.vfsx.tar.zst",
+            self.config.name, self.config.version, self.profile
         ));
 
         let vfsx = Vfsx::new(false);

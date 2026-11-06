@@ -906,7 +906,7 @@ pub fn cmd_completion(shell: &str) -> Result<()> {
             let mut cmds = String::new();
             for c in [
                 "init", "build", "add", "remove", "update", "lock", "clean", "validate",
-                "sign", "verify", "publish", "install", "uninstall", "test", "lint", "fmt",
+                "sign", "verify", "uninstall", "test", "lint", "fmt",
                 "doc", "version", "ci", "migrate", "completion", "trust", "cache", "outdated",
                 "tree", "toolchain", "audit", "sbom", "profile", "ide", "release", "review",
                 "diff", "flamegraph", "stats", "env",
@@ -920,13 +920,13 @@ pub fn cmd_completion(shell: &str) -> Result<()> {
             )
         }
         "zsh" => format!(
-            "#compdef poly\n_poly() {{\n  local -a cmds\n  cmds=(build test lint fmt doc init add remove update lock clean validate sign verify publish install uninstall version ci migrate completion trust cache outdated tree toolchain audit sbom profile ide release review diff flamegraph stats env)\n  _describe 'command' cmds\n}}\ncompdef _poly poly\n"
+            "#compdef poly\n_poly() {{\n  local -a cmds\n  cmds=(build test lint fmt doc init add remove update lock clean validate sign verify uninstall version ci migrate completion trust cache outdated tree toolchain audit sbom profile ide release review diff flamegraph stats env)\n  _describe 'command' cmds\n}}\ncompdef _poly poly\n"
         ),
         "fish" => {
             let mut s = String::from("complete -c poly -f\n");
             for c in [
                 "build", "test", "lint", "fmt", "doc", "init", "add", "remove", "update",
-                "lock", "clean", "validate", "sign", "verify", "publish", "install",
+                "lock", "clean", "validate", "sign", "verify",
                 "uninstall", "version", "ci", "migrate", "completion", "trust", "cache",
                 "outdated", "tree", "toolchain", "audit", "sbom", "profile", "ide",
                 "release", "review", "diff", "flamegraph", "stats", "env",
@@ -1171,20 +1171,13 @@ vim.api.nvim_create_autocmd("BufWritePost", {
 
 pub fn cmd_release(dry_run: bool) -> Result<()> {
     if dry_run {
-        info!("Dry run: would bump version, build release, and publish");
+        info!("Dry run: would build release and package");
         return Ok(());
     }
-    // Build release then publish (reuses cmd_build/cmd_publish logic via
-    // spawning the same binary keeps it simple and honest).
     let exe = std::env::current_exe()?;
     let status = Command::new(exe).args(["build", "--release"]).status()?;
     if !status.success() {
         anyhow::bail!("Release build failed");
-    }
-    let exe = std::env::current_exe()?;
-    let status = Command::new(exe).arg("publish").status()?;
-    if !status.success() {
-        anyhow::bail!("Publish failed");
     }
     Ok(())
 }
