@@ -784,6 +784,18 @@ fn topo_sort(
     Ok(())
 }
 
+/// Pick the crate root from expanded sources: `lib.rs` for library targets,
+/// `main.rs` for binaries, first source otherwise. rustc compiles a single
+/// root file; sibling files are modules reached through `mod` declarations.
+fn pick_rust_root(sources: &[PathBuf], type_: &str) -> PathBuf {
+    let preferred = if type_ == "bin" { "main.rs" } else { "lib.rs" };
+    sources
+        .iter()
+        .find(|p| p.file_name().and_then(|n| n.to_str()) == Some(preferred))
+        .cloned()
+        .unwrap_or_else(|| sources[0].clone())
+}
+
 fn build_rust_target(
     target_id: &str,
     target_config: &poly_config::Target,
@@ -802,6 +814,10 @@ fn build_rust_target(
         return Ok(None);
     }
 
+    // rustc takes a single crate root: lib.rs for libs, main.rs for bins.
+    // Other globbed sources are modules reached via `mod` declarations.
+    let root = pick_rust_root(&sources, &target_config.type_);
+
     let driver = poly_rust::RustDriver::new()?;
 
     // Create Rust target
@@ -819,10 +835,10 @@ fn build_rust_target(
             .unwrap_or_else(|| "2024".to_string()),
         features: target_config.features.clone(),
         dependencies: Vec::new(), // TODO: Resolve from config
-        source: sources[0].clone(),
+        source: root.clone(),
         flags: target_config.flags.clone(),
         target_triple: Some(target_triple.to_string()),
-        env: manifest_env(target_id, config, &sources[0]),
+        env: manifest_env(target_id, config, &root),
     };
 
     // Determine output path (add target triple subdirectory)
@@ -859,7 +875,7 @@ fn build_rust_target(
     if !(defer_link && rust_target.crate_type == "bin") {
         // Compile - dependencies are passed via --extern flags in target.flags
         driver.compile(
-            &sources[0],
+            &root,
             &output,
             &rust_target_with_deps,
             &[], // Empty - we use --extern flags in target.flags
