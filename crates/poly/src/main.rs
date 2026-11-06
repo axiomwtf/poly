@@ -440,7 +440,9 @@ async fn cmd_build(target: Option<String>, release: bool, config_path: Option<St
 
         let compiled_deps = if !config.dependencies.rust.is_empty() {
             info!("Compiling Rust dependencies for {}...", target_triple);
-            let dep_compiler = poly_core::DependencyCompiler::new(output_dir.clone())?;
+            let dep_compiler = poly_core::DependencyCompiler::new(
+                poly_core::project_cache_dir(&config.project.name).join(profile),
+            )?;
             let workspace_dir = std::env::current_dir()?;
             let compiled = dep_compiler
                 .compile_dependencies(&config.dependencies.rust, &workspace_dir, target_triple, profile, &locked_versions)
@@ -629,8 +631,48 @@ async fn cmd_build(target: Option<String>, release: bool, config_path: Option<St
         }
     }
 
+    clean_build_intermediates(&output_dir)?;
+
     info!("Build completed successfully");
 
+    Ok(())
+}
+
+/// Remove intermediate artifacts after a successful build. Deliverables are
+/// `bin/` executables and `*.vfsx.tar.zst` packages; rlibs, objects, and
+/// `.linklibs` are rebuilt on the next run. Dep artifacts now live in the
+/// project cache (`~/.cache/poly/{project}/{profile}/deps`), so any legacy
+/// `dist/{profile}/deps` directory is removed as well.
+fn clean_build_intermediates(output_dir: &Path) -> Result<()> {
+    let legacy_deps = output_dir.join("deps");
+    if legacy_deps.is_dir() {
+        std::fs::remove_dir_all(&legacy_deps)?;
+    }
+
+    for platform_entry in std::fs::read_dir(output_dir)? {
+        let platform_dir = platform_entry?.path();
+        if !platform_dir.is_dir() {
+            continue;
+        }
+        for triple_entry in std::fs::read_dir(&platform_dir)? {
+            let triple_dir = triple_entry?.path();
+            if !triple_dir.is_dir() {
+                continue;
+            }
+            for entry in std::fs::read_dir(&triple_dir)? {
+                let entry = entry?;
+                if entry.file_name() == "bin" {
+                    continue;
+                }
+                let path = entry.path();
+                if path.is_dir() {
+                    std::fs::remove_dir_all(&path)?;
+                } else {
+                    std::fs::remove_file(&path)?;
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -1349,12 +1391,21 @@ fn cmd_clean() -> Result<()> {
     info!("Cleaning build artifacts");
 
     // For MVP, just remove common build directories
-    let dirs_to_remove = vec!["target", "jgl_build", "poly_build"];
+    let dirs_to_remove = vec!["target", "jgl_build", "poly_build", "dist"];
 
     for dir in dirs_to_remove {
         if PathBuf::from(dir).exists() {
             std::fs::remove_dir_all(dir)?;
             info!("Removed: {}", dir);
+        }
+    }
+
+    // Remove this project's compiled-dependency cache too
+    if let Ok(config) = parse_poly_ini("poly.ini") {
+        let cache = poly_core::project_cache_dir(&config.project.name);
+        if cache.exists() {
+            std::fs::remove_dir_all(&cache)?;
+            info!("Removed: {}", cache.display());
         }
     }
 

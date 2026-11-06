@@ -14,7 +14,7 @@ pub mod source_analyzer;
 pub mod task;
 
 pub use cache::Cache;
-pub use dependency_compiler::{CompiledDependency, DependencyCompiler};
+pub use dependency_compiler::{project_cache_dir, CompiledDependency, DependencyCompiler};
 pub use dependency_downloader::{DependencyDownloader, DownloadedDependency};
 pub use graph::BuildGraph;
 pub use source_analyzer::DependencyAnalyzer;

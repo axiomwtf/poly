@@ -132,8 +132,9 @@ async fn run_rust_tests(
 
     // Reuse debug dep artifacts — dep rlibs are identical for tests.
     let profile = "debug";
-    let dep_compiler =
-        poly_core::DependencyCompiler::new(PathBuf::from("dist").join(profile))?;
+    let dep_compiler = poly_core::DependencyCompiler::new(
+        poly_core::project_cache_dir(&config.project.name).join(profile),
+    )?;
     let workspace_dir = std::env::current_dir()?;
     let locked = crate::read_locked_rust_versions();
     let compiled_deps = dep_compiler
@@ -347,7 +348,9 @@ async fn lint_rust(
     let clippy = which_tool("clippy-driver").or_else(|| which_tool("cargo-clippy"));
     let linter = clippy.unwrap_or_else(|| "rustc".to_string());
 
-    let dep_compiler = poly_core::DependencyCompiler::new(PathBuf::from("dist/debug"))?;
+    let dep_compiler = poly_core::DependencyCompiler::new(
+        poly_core::project_cache_dir(&config.project.name).join("debug"),
+    )?;
     let workspace_dir = std::env::current_dir()?;
     let locked = crate::read_locked_rust_versions();
     let compiled_deps = dep_compiler

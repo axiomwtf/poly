@@ -19,6 +19,26 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tracing::{debug, info};
 
+/// Root cache directory for a project's compiled dependency artifacts:
+/// `~/.cache/poly/{project}/`. Compiled units live under `{profile}/deps/`
+/// so `dist/` only contains deliverables.
+pub fn project_cache_dir(project_name: &str) -> PathBuf {
+    let safe: String = project_name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    dirs::cache_dir()
+        .unwrap_or_else(|| PathBuf::from(".cache"))
+        .join("poly")
+        .join(safe)
+}
+
 /// Dependency compiler
 pub struct DependencyCompiler {
     downloader: DependencyDownloader,
