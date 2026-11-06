@@ -61,9 +61,15 @@ impl DependencyDownloader {
         // Extract the crate
         let extract_path = self.extract_crate(&crate_path, name, version)?;
 
-        // For now, use a placeholder checksum to avoid extra API calls
-        // In a full implementation, we'd verify the checksum
-        let checksum = "placeholder".to_string();
+        // crates.io cksum is a sha256 hex digest — record the real one so
+        // poly.lock carries a verifiable checksum instead of a placeholder.
+        let checksum = match self.client.get_checksum(name, version).await {
+            Ok(cksum) => format!("sha256:{}", cksum),
+            Err(e) => {
+                warn!("checksum lookup failed for {} {}: {}", name, version, e);
+                "unverified".to_string()
+            }
+        };
 
         debug!("Downloaded dependency: {} {}", name, version);
         

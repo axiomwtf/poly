@@ -731,7 +731,7 @@ pub(crate) fn parse_build_targets(config: &poly_config::Config) -> Result<Vec<St
     let mut graph: HashMap<String, Vec<String>> = HashMap::new();
     
     for target in default_targets {
-        // Strip language prefix (e.g., "rust:poly-cli" -> "poly-cli")
+        // Strip language prefix (e.g., "rust:poly" -> "poly")
         let crate_name = target.split(':').last().unwrap_or(target);
         let deps = config.dependencies.workspace.get(crate_name)
             .map(|deps| deps.keys().cloned().collect())

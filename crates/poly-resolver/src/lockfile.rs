@@ -65,7 +65,9 @@ impl LockFile {
         for dep in &self.dependencies {
             output.push_str(&format!("[dependency.{}.{}]\n", dep.language, dep.name));
             output.push_str(&format!("version = {}\n", dep.version));
-            output.push_str(&format!("checksum = {}\n", dep.checksum));
+            if !dep.checksum.is_empty() {
+                output.push_str(&format!("checksum = {}\n", dep.checksum));
+            }
             output.push_str(&format!("source = {}\n", dep.source));
             if let Some(sig) = &dep.signature {
                 output.push_str(&format!("signature = {}\n", sig));

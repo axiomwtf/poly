@@ -126,7 +126,7 @@ fn collect_files(root: &Path) -> Result<Vec<(PathBuf, PathBuf)>> {
 /// Naming rules:
 /// - `[publish] crateName` set + multiple Rust targets →
 ///   `{crateName}-{suffix}` where suffix is the target id with the
-///   `{project}-` prefix stripped (poly-cli → axiom-poly-cli).
+///   `{project}-` prefix stripped (poly-tools → axiom-poly-tools).
 /// - `[publish] crateName` set + single target → `crateName`.
 /// - No override → the target id itself (poly-config, my-app, ...).
 pub fn crate_name_for(config: &Config, target_id: &str) -> String {
@@ -514,7 +514,7 @@ mod tests {
         let root = Path::new("/home/void01x/devin/poly");
         let config = poly_config::parse_poly_ini(&root.join("poly.ini").to_string_lossy())
             .expect("parse poly.ini");
-        let archive = build_crate_archive(&config, "poly-cli", root).expect("build crate");
+        let archive = build_crate_archive(&config, "poly", root).expect("build crate");
         assert!(!archive.bytes.is_empty());
         assert_eq!(archive.sha256.len(), 64);
 

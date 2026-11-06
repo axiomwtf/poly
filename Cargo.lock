@@ -1103,20 +1103,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 
 [[package]]
-name = "poly-c"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "glob",
- "serde",
- "thiserror",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "poly-cli"
-version = "0.1.0"
+name = "poly"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1146,8 +1134,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "poly-c"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "glob",
+ "serde",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "poly-config"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "nom",
@@ -1158,7 +1158,7 @@ dependencies = [
 
 [[package]]
 name = "poly-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "dirs",
@@ -1177,7 +1177,7 @@ dependencies = [
 
 [[package]]
 name = "poly-go"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -1188,7 +1188,7 @@ dependencies = [
 
 [[package]]
 name = "poly-linker"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "poly-c",
@@ -1202,7 +1202,7 @@ dependencies = [
 
 [[package]]
 name = "poly-package"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1216,7 +1216,7 @@ dependencies = [
 
 [[package]]
 name = "poly-registry"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "dirs",
@@ -1230,7 +1230,7 @@ dependencies = [
 
 [[package]]
 name = "poly-resolver"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1242,7 +1242,7 @@ dependencies = [
 
 [[package]]
 name = "poly-rust"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "serde",

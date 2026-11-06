@@ -54,46 +54,61 @@ impl DependencyResolver {
         // Parse metadata (e.g., "1.0|full" -> version "1.0", features "full")
         let (version, _metadata) = self.parse_version_spec(version_spec);
 
-        // For MVP, we'll just use the version as-is
-        // In the full implementation, this would query crates.io
-
+        // Rust deps come from crates.io, which mandates sha256 checksums.
         Ok(LockEntry {
             language: "rust".to_string(),
             name: name.to_string(),
             version,
-            checksum: format!("sha256:{}", self.placeholder_checksum()),
+            checksum: self.placeholder_checksum("sha256"),
             source: "https://crates.io".to_string(),
-            signature: None, // Will be filled by VFSX integration
+            signature: None,
         })
     }
 
     fn resolve_c_dep(&self, name: &str, version_spec: &str) -> Result<LockEntry> {
         let (version, source) = self.parse_version_spec(version_spec);
 
-        let source_url = match source.as_deref() {
-            Some("poly") => "https://crates.io",
-            Some("system") => "system",
-            _ => "https://crates.io",
+        // `|poly` pulls from the Poly registry — vfsx archives, content-addressed
+        // by blake3 and ed25519-signed (spec §5.1, §6.1). `|system` uses
+        // pkg-config; `git:`/`path:` values are non-registry sources. Anything
+        // else defaults to crates.io (sha256, registry-mandated).
+        let (source_url, checksum, signature) = match source.as_deref() {
+            Some("poly") => (
+                poly_registry_url(),
+                self.placeholder_checksum("blake3"),
+                Some("vfsx:pending".to_string()),
+            ),
+            Some("system") => ("system".to_string(), String::new(), None),
+            _ if version.starts_with("git:") || version.starts_with("path:") => {
+                (version.clone(), String::new(), None)
+            }
+            _ => (
+                "https://crates.io".to_string(),
+                self.placeholder_checksum("sha256"),
+                None,
+            ),
         };
 
         Ok(LockEntry {
             language: "c".to_string(),
             name: name.to_string(),
             version,
-            checksum: format!("sha256:{}", self.placeholder_checksum()),
-            source: source_url.to_string(),
-            signature: None,
+            checksum,
+            source: source_url,
+            signature,
         })
     }
 
     fn resolve_go_dep(&self, name: &str, version_spec: &str) -> Result<LockEntry> {
         let (version, _metadata) = self.parse_version_spec(version_spec);
 
+        // proxy.golang.org is an external registry — sha256 placeholder until
+        // the real dirhash checksum is recorded at download time.
         Ok(LockEntry {
             language: "go".to_string(),
             name: name.to_string(),
             version,
-            checksum: format!("sha256:{}", self.placeholder_checksum()),
+            checksum: self.placeholder_checksum("sha256"),
             source: "https://proxy.golang.org".to_string(),
             signature: None,
         })
@@ -108,11 +123,21 @@ impl DependencyResolver {
         }
     }
 
-    fn placeholder_checksum(&self) -> String {
-        // Placeholder checksum for MVP
-        // In full implementation, this would be computed from the actual package
-        "0000000000000000000000000000000000000000000000000000000000000000".to_string()
+    /// Placeholder checksum for MVP, prefixed with the integrity scheme:
+    /// `sha256:` for external registries that mandate it, `blake3:` for
+    /// vfsx-archive packages (vfsx content addressing is blake3-based).
+    /// The real value is filled once the package is downloaded.
+    fn placeholder_checksum(&self, scheme: &str) -> String {
+        const ZEROES: &str =
+            "0000000000000000000000000000000000000000000000000000000000000000";
+        format!("{}:{}", scheme, ZEROES)
     }
+}
+
+/// Poly registry URL for `|poly` dependencies: `POLY_REGISTRY_URL` when set,
+/// otherwise the `poly://` scheme marker until a canonical registry exists.
+fn poly_registry_url() -> String {
+    std::env::var("POLY_REGISTRY_URL").unwrap_or_else(|_| "poly://registry".to_string())
 }
 
 impl Default for DependencyResolver {

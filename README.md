@@ -167,7 +167,7 @@ postBuild = "echo done"
 
 Cargo workspace:
 
-- `poly-cli` - CLI, crates.io publish/install, hooks
+- `poly` - CLI, crates.io publish/install, hooks
 - `poly-core` - dependency compiler (unit graph, cache, lockfile)
 - `poly-config` - `poly.ini` parser
 - `poly-resolver` - version resolution
