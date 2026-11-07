@@ -2,14 +2,14 @@
 
 **One build system for Rust, C/C++ and Go**
 
-Poly is a build system and package manager for Rust, C/C++ and Go, with one manifest (`poly.ini`), one lock file (`poly.lock`), and one command set. It invokes `rustc`, C/C++ compilers, and the Go toolchain directly — no Cargo, CMake, or Make involved in user-project builds.
+Poly is a build system and package manager for Rust, C/C++ and Go, with one manifest (`poly.ini`), one lock file (`poly.lock`), and one command set. It invokes `rustc`, C/C++ compilers, and the Go toolchain directly - no Cargo, CMake, or Make involved in user-project builds.
 
 > **Status:** All six spec phases implemented.
 
 ## Features
 
 - **Unified manifest**: Single `poly.ini` for all three languages
-- **Direct compiler invocation**: `rustc`, `gcc`/`clang`/MSVC, `go` — never Cargo for user projects
+- **Direct compiler invocation**: `rustc`, `gcc`/`clang`/MSVC, `go` - never Cargo for user projects
 - **Full Rust dependency compilation**: transitive deps, features, optional deps, renamed deps, proc macros, build scripts with `links`/`DEP_*` propagation, target-specific deps
 - **Source-usage analysis**: only crates actually referenced in `use`/paths are compiled as direct externs
 - **Cross-compilation**: Linux + Windows binaries from a single `poly build` (MinGW toolchain for Windows)
@@ -54,7 +54,7 @@ poly build --release
 poly build --no-package   # skip the combined .vfsx.tar.zst package
 ```
 
-Builds all targets for **both Windows and Linux** — there's no flag to pick one OS.
+Builds all targets for **both Windows and Linux** - there's no flag to pick one OS.
 
 **Output** goes to `dist/{profile}/`:
 
@@ -87,7 +87,7 @@ poly login              # paste a crates.io API token (stored locally)
 poly publish            # publishes every rust:* target in [publish] targets
 ```
 
-Each Rust target becomes a `.crate` on crates.io containing the full project sources, `poly.ini`, `poly.lock`, and a stub `Cargo.toml` (registry compatibility only — `poly.ini` is the source of truth). Crate naming: `[publish] crateName` + target suffix for multi-target projects, or the target id by default.
+Each Rust target becomes a `.crate` on crates.io containing the full project sources, `poly.ini`, `poly.lock`, and a stub `Cargo.toml` (registry compatibility only - `poly.ini` is the source of truth). Crate naming: `[publish] crateName` + target suffix for multi-target projects, or the target id by default.
 
 ### Quality tooling
 
@@ -179,7 +179,7 @@ Cargo workspace:
 
 ## Honest limitations
 
-- The resolver is greedy latest-match, not a full SAT solver — exotic version conflicts can resolve incorrectly
+- The resolver is greedy latest-match, not a full SAT solver - exotic version conflicts can resolve incorrectly
 - C/C++ and Go drivers work but are less battle-tested than Rust
 - Some advanced commands (`audit`, `flamegraph`, `toolchain install`, plugins) are functional but basic
 - crates.io packages are source distributions; `poly install` compiles them locally

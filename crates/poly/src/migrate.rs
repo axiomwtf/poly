@@ -1,4 +1,4 @@
-//! `poly migrate` — convert Cargo.toml / go.mod / CMakeLists.txt to poly.ini.
+//! `poly migrate` - convert Cargo.toml / go.mod / CMakeLists.txt to poly.ini.
 //!
 //! Produces a complete poly.ini: [project] metadata, [target.*] sections,
 //! dependency tables, and [workspace] members for cargo workspaces.
@@ -46,7 +46,7 @@ fn write_output(ini: &str, report: &Report) -> Result<()> {
     std::fs::write("poly.ini", ini)?;
     let mut text = String::from("# poly migrate report\n\n");
     if report.lines.is_empty() {
-        text.push_str("no issues — everything migrated cleanly\n");
+        text.push_str("no issues - everything migrated cleanly\n");
     } else {
         for l in &report.lines {
             text.push_str(l);
@@ -65,7 +65,7 @@ fn ini_array(values: &[String]) -> String {
     values.join(", ")
 }
 
-/// poly.ini has no quoting semantics — values are taken verbatim after `=`.
+/// poly.ini has no quoting semantics - values are taken verbatim after `=`.
 fn ini_val(s: &str) -> String {
     s.to_string()
 }
@@ -122,7 +122,7 @@ fn migrate_cargo() -> Result<()> {
     }
     let member_names: Vec<String> = member_pkgs.iter().map(|p| p.name.clone()).collect();
 
-    // [workspace.dependencies] — shared version specs, become global rust deps
+    // [workspace.dependencies] - shared version specs, become global rust deps
     let ws_deps = doc
         .get("workspace")
         .and_then(|w| w.get("dependencies"))
@@ -188,7 +188,7 @@ fn migrate_cargo() -> Result<()> {
         }
     }
 
-    // [dependencies.rust]: poly compiles only the GLOBAL dep set — member
+    // [dependencies.rust]: poly compiles only the GLOBAL dep set - member
     // registry deps must be unioned in or they never reach rustc. `path`
     // entries (sibling crates) stay member-local.
     let mut global_deps: Vec<(String, String)> = Vec::new();
@@ -216,7 +216,7 @@ fn migrate_cargo() -> Result<()> {
     for (name, spec) in global_deps {
         if let Some(existing) = deduped.iter_mut().find(|(n, _)| *n == name) {
             if existing.1 != spec {
-                report.note(format!("dep '{}': conflicting specs '{}' vs '{}' — kept '{}'", name, existing.1, spec, existing.1));
+                report.note(format!("dep '{}': conflicting specs '{}' vs '{}' - kept '{}'", name, existing.1, spec, existing.1));
             }
         } else {
             deduped.push((name, spec));
@@ -949,7 +949,7 @@ fn cmake_target_body(
     let mut body = String::new();
     body.push_str("language = c\n");
     body.push_str(&format!("type = {}\n", real_ty));
-    // Emit explicit file list (comma-separated) — poly accepts globs too
+    // Emit explicit file list (comma-separated) - poly accepts globs too
     let src_list: Vec<String> = srcs.iter().map(|s| s.trim_end_matches(')').to_string()).collect();
     body.push_str(&format!("sources = {}\n", ini_array(&src_list)));
     Some((sanitize(&name), body))

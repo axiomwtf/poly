@@ -68,7 +68,7 @@ impl DependencyResolver {
     fn resolve_c_dep(&self, name: &str, version_spec: &str) -> Result<LockEntry> {
         let (version, source) = self.parse_version_spec(version_spec);
 
-        // `|poly` pulls from the Poly registry — vfsx archives, content-addressed
+        // `|poly` pulls from the Poly registry - vfsx archives, content-addressed
         // by blake3 and ed25519-signed (spec §5.1, §6.1). `|system` uses
         // pkg-config; `git:`/`path:` values are non-registry sources. Anything
         // else defaults to crates.io (sha256, registry-mandated).
@@ -102,7 +102,7 @@ impl DependencyResolver {
     fn resolve_go_dep(&self, name: &str, version_spec: &str) -> Result<LockEntry> {
         let (version, _metadata) = self.parse_version_spec(version_spec);
 
-        // proxy.golang.org is an external registry — sha256 placeholder until
+        // proxy.golang.org is an external registry - sha256 placeholder until
         // the real dirhash checksum is recorded at download time.
         Ok(LockEntry {
             language: "go".to_string(),

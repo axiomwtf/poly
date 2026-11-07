@@ -60,7 +60,7 @@ fn parse_ini_content(content: &str) -> Result<Config> {
     build_config(sections)
 }
 
-/// Spec §5.3: config keys must be camelCase — lowercase start, no hyphens,
+/// Spec §5.3: config keys must be camelCase - lowercase start, no hyphens,
 /// underscores or dots within each hierarchy segment. Dependency names are
 /// exempt (they are external package names).
 fn is_camel_case_key(key: &str) -> bool {

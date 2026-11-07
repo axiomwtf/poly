@@ -130,7 +130,7 @@ async fn run_rust_tests(
         return Ok(true);
     }
 
-    // Reuse debug dep artifacts — dep rlibs are identical for tests.
+    // Reuse debug dep artifacts - dep rlibs are identical for tests.
     let profile = "debug";
     let dep_compiler = poly_core::DependencyCompiler::new(
         poly_core::project_cache_dir(&config.project.name).join(profile),
@@ -355,7 +355,7 @@ async fn lint_rust(
 }
 
 /// Poly-native naming lint (polyspec §5.3/§10.2): every identifier in the
-/// project's own sources must be camelCase — starts with a lowercase letter,
+/// project's own sources must be camelCase - starts with a lowercase letter,
 /// no underscores or hyphens. Dependency crates are never scanned; only the
 /// target's own `sources` globs are.
 fn lint_rust_naming(path: &Path, content: &str) -> usize {
@@ -410,7 +410,7 @@ fn lint_rust_naming(path: &Path, content: &str) -> usize {
         for caps in decl_re.captures_iter(line) {
             let keyword = &caps[1];
             let name = &caps[2];
-            // `let`/`for`-style bindings only count when followed by `=`/`:` —
+            // `let`/`for`-style bindings only count when followed by `=`/`:` -
             // `let Some(x)`, `let Foo { .. }`, `let Enum::Variant` are patterns.
             if keyword == "let" {
                 let after = line[caps.get(0).unwrap().end()..].trim_start();
@@ -427,7 +427,7 @@ fn lint_rust_naming(path: &Path, content: &str) -> usize {
             issues += check(&caps[1], "macro");
         }
         // Function parameters: first ident of each comma-separated param.
-        // Only simple `name` / `name: Type` params — destructured patterns
+        // Only simple `name` / `name: Type` params - destructured patterns
         // like `(a, b): (i32, i32)` are skipped.
         for caps in fn_re.captures_iter(line) {
             for param in caps[1].split(',') {
@@ -460,7 +460,7 @@ fn lint_rust_naming(path: &Path, content: &str) -> usize {
 }
 
 /// camelCase per polyspec §5.3: starts with a lowercase letter, then only
-/// letters and digits — no underscores, hyphens, or leading capitals.
+/// letters and digits - no underscores, hyphens, or leading capitals.
 fn is_camel_case(name: &str) -> bool {
     let mut chars = name.chars();
     match chars.next() {
@@ -640,7 +640,7 @@ pub fn cmd_version_check() -> Result<()> {
     let version = find_project_version(&content).context("No [project] version found")?;
     info!("Project version: {}", version);
     if PathBuf::from("poly.lock").exists() {
-        info!("poly.lock present — run `poly outdated` to check for updates");
+        info!("poly.lock present - run `poly outdated` to check for updates");
     }
     Ok(())
 }
@@ -921,7 +921,7 @@ fn dir_stats(dir: &Path) -> Result<(u64, u64)> {
 
 pub async fn cmd_outdated() -> Result<()> {
     let lock = poly_resolver::LockFile::read("poly.lock")
-        .context("No poly.lock — run `poly build` or `poly lock` first")?;
+        .context("No poly.lock - run `poly build` or `poly lock` first")?;
     let client = poly_registry::RegistryClient::new()?;
     let mut outdated = 0usize;
     for entry in &lock.dependencies {
@@ -945,7 +945,7 @@ pub async fn cmd_outdated() -> Result<()> {
 
 pub fn cmd_tree() -> Result<()> {
     let lock = poly_resolver::LockFile::read("poly.lock")
-        .context("No poly.lock — run `poly build` or `poly lock` first")?;
+        .context("No poly.lock - run `poly build` or `poly lock` first")?;
     let mut by_lang: HashMap<String, Vec<String>> = HashMap::new();
     for entry in &lock.dependencies {
         by_lang
@@ -995,7 +995,7 @@ pub fn cmd_toolchain(sub: &str) -> Result<()> {
 pub fn cmd_audit(_fix: bool) -> Result<()> {
     // MVP: verify all locked checksums are present and well-formed.
     let lock = poly_resolver::LockFile::read("poly.lock")
-        .context("No poly.lock — run `poly build` first")?;
+        .context("No poly.lock - run `poly build` first")?;
     let mut bad = 0usize;
     for entry in &lock.dependencies {
         if entry.checksum.trim().is_empty()
@@ -1015,7 +1015,7 @@ pub fn cmd_audit(_fix: bool) -> Result<()> {
 
 pub fn cmd_sbom() -> Result<()> {
     let lock = poly_resolver::LockFile::read("poly.lock")
-        .context("No poly.lock — run `poly build` first")?;
+        .context("No poly.lock - run `poly build` first")?;
     let sbom = serde_json::json!({
         "bomFormat": "Poly-SBOM/1",
         "dependencies": lock.dependencies.iter().map(|e| serde_json::json!({

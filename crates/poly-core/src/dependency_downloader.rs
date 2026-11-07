@@ -61,7 +61,7 @@ impl DependencyDownloader {
         // Extract the crate
         let extract_path = self.extract_crate(&crate_path, name, version)?;
 
-        // crates.io cksum is a sha256 hex digest — record the real one so
+        // crates.io cksum is a sha256 hex digest - record the real one so
         // poly.lock carries a verifiable checksum instead of a placeholder.
         let checksum = match self.client.get_checksum(name, version).await {
             Ok(cksum) => format!("sha256:{}", cksum),

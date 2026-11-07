@@ -66,7 +66,7 @@ impl Packager {
         let profile_dir = self.dist_dir.join(&self.profile);
         if !profile_dir.exists() {
             anyhow::bail!(
-                "No build output at {} — run `poly build` first",
+                "No build output at {} - run `poly build` first",
                 profile_dir.display()
             );
         }
@@ -113,7 +113,7 @@ impl Packager {
                 let dest_dir = staging.join("bin").join(&slug);
                 fs::create_dir_all(&dest_dir)?;
                 // poly-linker writes the single unified executable under
-                // <triple>/bin/. Only that file is packaged — per-target
+                // <triple>/bin/. Only that file is packaged - per-target
                 // artifacts stay in dist for debugging but are not shipped.
                 let unified_bin = triple_dir.join("bin");
                 let scan_dir = if unified_bin.is_dir() {

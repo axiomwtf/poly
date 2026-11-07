@@ -602,7 +602,7 @@ async fn cmd_build(target: Option<String>, release: bool, config_path: Option<St
         match create_combined_package(&config, profile).await {
             Ok(pkg) => {
                 info!("Created package: {}", pkg.display());
-                // The merged archive is the deliverable — drop the per-profile
+                // The merged archive is the deliverable - drop the per-profile
                 // build tree so dist/ only holds the package.
                 if let Err(e) = std::fs::remove_dir_all(&output_dir) {
                     warn!("Failed to remove {}: {}", output_dir.display(), e);
@@ -910,7 +910,7 @@ fn build_rust_target(
     rust_target_with_deps.flags = all_flags;
 
     // When foreign-language targets will be merged by poly-linker, the bin's
-    // final link is deferred — the unified step performs the only rustc
+    // final link is deferred - the unified step performs the only rustc
     // invocation, with foreign archives passed via -C link-args.
     if !(defer_link && rust_target.crate_type == "bin") {
         // Compile - dependencies are passed via --extern flags in target.flags
@@ -961,7 +961,7 @@ pub(crate) fn rust_dep_args(
         }
     }
 
-    // Library search paths — include host (proc-macro/build) artifact dirs
+    // Library search paths - include host (proc-macro/build) artifact dirs
     // too, since target rlibs reference them transitively. Also add native
     // link-search paths emitted by build scripts (e.g. windows import libs).
     for dep in compiled_deps.values() {
@@ -1074,7 +1074,7 @@ fn build_c_target(
         info!("No sources found for target {}", target_id);
         return Ok(None);
     }
-    // Headers are inputs for include scanning, not compile units — compiling
+    // Headers are inputs for include scanning, not compile units - compiling
     // them produces PCH objects that corrupt the archive.
     let sources: Vec<PathBuf> = all_sources
         .into_iter()
@@ -1146,7 +1146,7 @@ fn build_c_target(
         _ => target_dir.join(format!("lib{}.a", target_id)),
     };
 
-    // Link — deferred for bin targets when foreign languages will be merged
+    // Link - deferred for bin targets when foreign languages will be merged
     // by poly-linker (spec §8.2 single-executable packaging).
     if !(defer_link && c_target.target_type == "bin") {
         driver.link(&c_target, &objects, &output)?;
@@ -1584,7 +1584,7 @@ fn manifest_env(target_id: &str, config: &poly_config::Config, first_source: &Pa
     v
 }
 
-/// Crate names of every Rust publish target — recorded as package
+/// Crate names of every Rust publish target - recorded as package
 /// dependencies so a meta install can pull the whole family.
 fn sibling_crates(config: &poly_config::Config) -> Vec<String> {
     let specs = config

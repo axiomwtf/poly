@@ -2,7 +2,7 @@
 //!
 //! Delegation boundary (polyspec §7.3): pure-Go packages build through
 //! `go tool compile`/`go tool link` directly (`compile_native`). The `go`
-//! command is invoked only where no tool-level equivalent exists — `go list`
+//! command is invoked only where no tool-level equivalent exists - `go list`
 //! for dependency export data, `go build` for cgo/module-mode builds,
 //! `go test`/`go vet` for test and lint.
 
@@ -193,7 +193,7 @@ impl GoDriver {
     }
 
     /// Spec §7.3: compile with `go tool compile` + `go tool link` directly.
-    /// No go.mod — sources are staged into GOPATH layout and importcfg is
+    /// No go.mod - sources are staged into GOPATH layout and importcfg is
     /// generated from `go list -export`. Only for pure-Go packages; files
     /// importing "C" need the cgo pipeline (`go build` path).
     pub fn compile_native(

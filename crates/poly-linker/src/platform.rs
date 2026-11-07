@@ -145,7 +145,7 @@ pub fn link_platform_executable(
 
     if foreign_libs.is_empty() && primary_artifact.exists() {
         // Single-language (or Rust-only) build: the primary artifact already
-        // is the platform executable — just give it the unified name.
+        // is the platform executable - just give it the unified name.
         std::fs::copy(&primary_artifact, &unified)?;
         return Ok(Some(unified));
     }

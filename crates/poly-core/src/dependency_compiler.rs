@@ -297,7 +297,7 @@ impl DependencyCompiler {
 
         for (name, spec) in &needed_deps {
             // Spec §6.1 sources: git:/path: are whole-value specs, and
-            // |poly / |system are registry markers — not feature lists.
+            // |poly / |system are registry markers - not feature lists.
             if spec.starts_with("git:") || spec.starts_with("path:") {
                 tracing::warn!(
                     "dependency '{}': '{}' source is not yet supported; skipping",
@@ -417,7 +417,7 @@ impl DependencyCompiler {
 
         let mut dep = self.downloader.download(name, &version).await;
         if dep.is_err() && used_locked {
-            // Locked version no longer available — fall back to latest match.
+            // Locked version no longer available - fall back to latest match.
             debug!(
                 "Locked download of {}@{} failed; re-resolving",
                 name, version
@@ -653,7 +653,7 @@ impl DependencyCompiler {
                 if let Some(child) = self.resolved_dependency(state, id, dep_name) {
                     request_feature(state, child, feature_name);
                 } else {
-                    // Optional dep not activated yet — defer until it is.
+                    // Optional dep not activated yet - defer until it is.
                     state
                         .weak_pending
                         .push((id.clone(), dep_name.to_string(), feature_name.to_string()));
