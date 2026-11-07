@@ -1,9 +1,10 @@
 [package]
 name = "poly-vfsx"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "Poly VFSX wrapper for external vfsx command"
-license = "MPL-2.0"
 
 [dependencies]
 anyhow = { workspace = true }
