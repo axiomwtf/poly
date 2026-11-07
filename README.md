@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./axiom.svg" alt="Poly" width="320">
+  <img src="./poly.svg" alt="Poly" width="320">
 </p>
 
 # Poly

@@ -1,7 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1530 1016" width="1530" height="1016">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1670 939" width="1670" height="939">
   <title>Poly</title>
-  <rect width="1530" height="1016" fill="#000"/>
+  <rect width="1670" height="939" fill="#000"/>
 
+  <g transform="matrix(1.665608 0 0 1.665608 -461.676 -343.317)">
   <g stroke-linejoin="round" stroke-width="2">
     <path fill="#b999f8" stroke="#b999f8" d="M457 320 L424 418 L307 406 Z"/>
     <path fill="#7b3bf6" stroke="#7b3bf6" d="M457 320 L606 402 L424 418 Z"/>
@@ -20,5 +21,6 @@
              M940 453 C962 453 979 471 979 494 C979 517 962 535 940 535 C918 535 901 517 901 494 C901 471 918 453 940 453 Z"/>
     <path d="M1036 366 L1078 366 L1078 567 L1036 567 Z"/>
     <path d="M1092 420 L1136 420 L1174 513 L1209 420 L1252 420 L1177 601 C1168 612 1162 616 1147 621 L1106 622 L1106 587 L1138 584 C1143 582 1146 580 1152 561 Z"/>
+  </g>
   </g>
 </svg>
