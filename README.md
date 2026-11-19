@@ -1,18 +1,18 @@
 <p align="center">
-  <img src="./poly.svg" alt="Poly" width="320">
+  <img src="./poly.svg" alt="poly" width="320">
 </p>
 
-# Poly
+# poly
 
 **One build system for Rust, C/C++ and Go.**
 
-Poly is a build system and package manager for Rust, C/C++ and Go by [Axiom](https://github.com/axiomwtf). It uses one manifest (`poly.ini`), one lock file (`poly.lock`), and one command set, and invokes `rustc`, C/C++ compilers, and the Go toolchain directly instead of Cargo, CMake, Make or go mod for user projects.
+poly is a build system and package manager for Rust, C/C++ and Go by [Axiom](https://github.com/axiomwtf). It uses one manifest (`poly.ini`), one lock file (`poly.lock`), and one command set, and invokes `rustc`, C/C++ compilers, and the Go toolchain directly instead of Cargo, CMake, Make or go mod for user projects.
 
 > **Status:** `0.2.1` - available.
 
 ## Why
 
-- **Native, not a wrapper.** Poly calls `rustc`, `gcc`/`clang`/`msvc` and `go tool` directly, then does its own dependency resolution, build graph, incremental compilation and linking.
+- **Native, not a wrapper.** poly calls `rustc`, `gcc`/`clang`/`msvc` and `go tool` directly, then does its own dependency resolution, build graph, incremental compilation and linking.
 - **One manifest.** A single `poly.ini` covers targets, dependencies, profiles, publishing, formatting, toolchains, cross-compilation, plugins and hooks.
 - **Signed packages.** `poly build` produces `.vfsx.tar.zst` packages that are verified with the external `vfsx` tool before extraction.
 - **Cross-compiles by default.** Every `poly build` produces Windows and Linux binaries; there is no flag to pick one OS.
@@ -103,7 +103,7 @@ poly install my-app
 poly uninstall my-app
 ```
 
-`poly publish` uploads Rust targets to crates.io as source packages containing `poly.ini`, `poly.lock` and a stub `Cargo.toml`. `poly install` downloads sources, builds them with Poly and installs the result. `poly login`/`poly logout` store registry tokens in `~/.config/poly/credentials.toml`.
+`poly publish` uploads Rust targets to crates.io as source packages containing `poly.ini`, `poly.lock` and a stub `Cargo.toml`. `poly install` downloads sources, builds them with poly and installs the result. `poly login`/`poly logout` store registry tokens in `~/.config/poly/credentials.toml`.
 
 ## Limitations
 
@@ -113,7 +113,7 @@ poly uninstall my-app
 
 ## Building from source
 
-Poly is written in Rust (edition 2024). The CLI lives in [`crates/poly`](./crates/poly) and the supporting crates live in [`crates/`](./crates).
+poly is written in Rust (edition 2024). The CLI lives in [`crates/poly`](./crates/poly) and the supporting crates live in [`crates/`](./crates).
 
 ```bash
 git clone https://github.com/axiomwtf/poly.git
@@ -122,7 +122,7 @@ cargo build --release
 ./target/release/poly --help
 ```
 
-There is no `cargo install`-able binary yet; the crates.io crate is a source package. Once you have a `poly` binary, Poly-built projects work without Cargo: `poly install axiom-poly` downloads sources from crates.io, builds them with Poly and installs the result.
+There is no `cargo install`-able binary yet; the crates.io crate is a source package. Once you have a `poly` binary, poly-built projects work without Cargo: `poly install axiom-poly` downloads sources from crates.io, builds them with poly and installs the result.
 
 ## Spec
 
