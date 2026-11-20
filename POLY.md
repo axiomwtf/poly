@@ -3,7 +3,7 @@
 **Ownership:** poly is owned by AXIOM ![Axiom Logo](./axiom.svg)
 **Status:** Available.
 **License:** MPL-2.0
-**Last updated:** 2026-11-06
+**Last updated:** 2026-11-20
 ---
 
 ## 1. Overview
@@ -18,7 +18,7 @@ poly is not a wrapper. It calls the compilers itself:
 
 poly does its own dependency resolution, build graph construction, incremental compilation and linking.
 
-Each package is a single VFSX-signed archive. For each platform it contains one executable, and that executable is built from every language in the package.
+Each package is a single vfsx-signed archive. For each platform it contains one executable, and that executable is built from every language in the package.
 
 ---
 
@@ -26,7 +26,7 @@ Each package is a single VFSX-signed archive. For each platform it contains one 
 
 1. **Native, not a wrapper.** poly drives the compilers itself.
 2. **Minimal configuration.** One INI file, easy to read, edit and parse.
-3. **Signed by default.** Every package is a VFSX archive and is verified before it is extracted.
+3. **Signed by default.** Every package is a vfsx archive and is verified before it is extracted.
 4. **One artifact per platform.** A package ships as one archive containing one executable per platform.
 5. **Unix-y.** Familiar commands, fast, and composable with other tools.
 
@@ -54,13 +54,13 @@ poly/
 ├── crates/
 │   ├── poly-core/          ← Task graph, caching, execution
 │   ├── poly-resolver/      ← Dependency resolution (SAT solver)
-│   ├── poly-registry/      ← Registry client (VFSX-verified)
+│   ├── poly-registry/      ← Registry client (vfsx-verified)
 │   ├── poly-rust/          ← Rust driver (rustc)
 │   ├── poly-c/             ← C/C++ driver (gcc, clang, msvc)
 │   ├── poly-go/            ← Go driver (go tool)
 │   ├── poly-linker/        ← Links one executable from several languages
 │   ├── poly-package/       ← Single-binary packaging
-│   ├── poly-vfsx/          ← VFSX signing and verification
+│   ├── poly-vfsx/          ← vfsx signing and verification
 │   ├── poly-test/          ← Test runner
 │   ├── poly-lint/          ← Linting and formatting
 │   ├── poly-doc/           ← Documentation generation
@@ -138,7 +138,7 @@ go.flags = -ldflags, -s -w
 
 [publish]
 targets = rust:lib, c:crypto, go:server
-platforms = x86_64-linux, aarch64-macos, x86_64-windows
+platforms = x86_64-linux, x86_64-windows
 includeDocs = true
 crateName = my-org-my-app        # optional crates.io name override
 tokenEnv = MY_REGISTRY_TOKEN     # optional env var for custom registry auth
@@ -221,7 +221,7 @@ Go and C/C++ have no equivalent default warning, so no suppression is needed the
 
 ### 6.1 Sources
 
-- `poly`: the poly registry (VFSX-signed)
+- `poly`: the poly registry (vfsx-signed)
 - `system`: a system package found through pkg-config
 - `git`: a Git repository, with optional `|branch=`, `|tag=` or `|rev=` pinning
 - `path`: a local path
@@ -319,11 +319,11 @@ dist/
 └── {name}-{version}-{profile}.vfsx.tar.zst   ← combined package
 ```
 
-`poly build --no-package` keeps the per-profile tree (`bin/` executables + per-platform VFSX archives) for inspection.
+`poly build --no-package` keeps the per-profile tree (`bin/` executables + per-platform vfsx archives) for inspection.
 
 **Cross-compilation.** poly compiles for both Windows and Linux by default. There is no `--target` flag to choose an OS; poly always produces binaries for both platforms. For Rust, this uses `--target x86_64-unknown-linux-gnu` and `--target x86_64-pc-windows-gnu`. For Go, it sets `GOOS=linux` and `GOOS=windows`. For C/C++, it uses the appropriate compiler or cross-compiler.
 
-**VFSX packaging.** After building, poly packages the compiled binaries as VFSX archives using the external `vfsx` command (`vfsx create <dir> -o <out> -c zstd`). Each platform gets its own archive containing all binaries for that platform, named `{project}-{platform}.{profile}.vfsx.tar.zst`. These per-platform archives are intermediates: the final step merges them into the combined `{name}-{version}-{profile}.vfsx.tar.zst` package at the `dist/` root.
+**vfsx packaging.** After building, poly packages the compiled binaries as vfsx archives using the external `vfsx` command (`vfsx create <dir> -o <out> -c zstd`). Each platform gets its own archive containing all binaries for that platform, named `{project}-{platform}.{profile}.vfsx.tar.zst`. These per-platform archives are intermediates: the final step merges them into the combined `{name}-{version}-{profile}.vfsx.tar.zst` package at the `dist/` root.
 
 ---
 
@@ -331,16 +331,15 @@ dist/
 
 ### 8.1 Package format
 
-A package is one VFSX archive, for example `my-app-1.0.0-release.vfsx.tar.zst`. It is signed as a whole.
+A package is one vfsx archive, for example `my-app-1.0.0-release.vfsx.tar.zst`. It is signed as a whole.
 
 ```
-my-app-1.0.0-release.vfsx.tar.zst   (VFSX-signed)
+my-app-1.0.0-release.vfsx.tar.zst   (vfsx-signed)
 ├── vfsx.manifest.json             ← Metadata and signatures
 ├── src/                           ← Source code
 ├── poly.lock                      ← Dependency lock file
 └── bin/                           ← Prebuilt executables, one per platform
     ├── x86_64-linux/my-app
-    ├── aarch64-macos/my-app
     └── x86_64-windows/my-app.exe
 ```
 
@@ -354,7 +353,7 @@ poly applies the same packaging rules everywhere: a package holds one executable
 
 ### 8.3 Signing
 
-- Packages are VFSX archives
+- Packages are vfsx archives
 - Packages are verified before they are extracted
 - Sources are trust-pinned
 
@@ -474,7 +473,7 @@ For each platform, poly:
 - **C/C++:** uses the platform-appropriate compiler or cross-compiler
 - **Go:** sets `GOOS=linux` or `GOOS=windows` (and `GOARCH=amd64`)
 
-After compiling, poly packages each platform's binaries into a separate VFSX archive in `dist/{profile}/`. The archives are named `{project}-{platform}.{profile}.vfsx.tar.zst` (zstd-compressed VFSX archives produced by the external `vfsx` tool).
+After compiling, poly packages each platform's binaries into a separate vfsx archive in `dist/{profile}/`. The archives are named `{project}-{platform}.{profile}.vfsx.tar.zst` (zstd-compressed vfsx archives produced by the external `vfsx` tool).
 
 Advanced cross-compilation to other platforms (aarch64, macOS, etc.) can be configured in `[cross]` for future phases.
 
@@ -659,7 +658,7 @@ poly ide vscode|neovim|lsp
 - Unified linker orchestration
 
 ### Phase 3: Integrations and packaging
-- VFSX signing and verification
+- vfsx signing and verification
 - Package registry client
 - Single-binary packaging: one executable per platform inside each package archive
 
@@ -699,7 +698,7 @@ poly ide vscode|neovim|lsp
 | Unified lock file across languages | ✅ | ❌ | ❌ | ❌ |
 | Direct compiler invocation | ✅ | ❌ (via rustc, managed by Cargo) | ❌ (via gcc/clang) | ❌ (via go tool) |
 | One executable per platform, all languages | ✅ | ❌ | ❌ | ❌ |
-| VFSX signing | ✅ | ❌ | ❌ | ❌ |
+| vfsx signing | ✅ | ❌ | ❌ | ❌ |
 | Workspace support | ✅ | ✅ | ❌ | ✅ |
 | Git dependencies | ✅ | ✅ | ❌ | ✅ |
 | Cross-compilation | ✅ | ✅ | ✅ | ✅ |
@@ -718,7 +717,7 @@ MPL-2.0. Source changes must be disclosed, the license must be included, and mod
 ## 21. Resources
 
 - Axiom: https://github.com/axiomwtf
-- VFSX: https://github.com/axiomwtf/vfsx
+- vfsx: https://github.com/axiomwtf/vfsx
 - poly is an Axiom project. Contributions are welcome.
 
 ---
