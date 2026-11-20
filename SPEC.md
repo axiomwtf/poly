@@ -1,6 +1,6 @@
 # poly Build System and Package Manager Specification
 **Version:** 0.2.1
-**Ownership:** poly is owned by AXIOM ![Axiom Logo](https://axiomwtf.github.io/axiom.svg)
+**Ownership:** poly is owned by AXIOM ![Axiom Logo](./axiom.svg)
 **Status:** Available.
 **License:** MPL-2.0
 **Last updated:** 2026-11-06
