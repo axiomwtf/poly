@@ -130,4 +130,4 @@ Read the spec! The full specification is in [`SPEC.md`](./SPEC.md).
 
 ## License
 
-MPL-2.0
+Apache-2.0

@@ -2,7 +2,7 @@
 **Version:** 0.2.1
 **Ownership:** poly is owned by AXIOM ![Axiom Logo](./axiom.svg)
 **Status:** Available.
-**License:** MPL-2.0
+**License:** Apache-2.0
 **Last updated:** 2026-11-20
 ---
 
@@ -710,7 +710,7 @@ poly ide vscode|neovim|lsp
 
 ## 20. License
 
-MPL-2.0. Source changes must be disclosed, the license must be included, and modifications use the same license.
+Apache-2.0. Include the license and NOTICE files, state changes, and distribute under the Apache License, Version 2.0.
 
 ---
 
