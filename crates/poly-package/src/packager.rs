@@ -261,7 +261,7 @@ impl Default for Packager {
                 version: "0.1.0".to_string(),
                 description: None,
                 authors: Vec::new(),
-                license: "MPL-2.0".to_string(),
+                license: "Apache-2.0".to_string(),
                 platforms: Vec::new(),
                 include_docs: false,
                 compression: "zstd".to_string(),
